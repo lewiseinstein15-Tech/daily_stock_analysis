@@ -24,7 +24,7 @@ BASE_URL = 'https://paper-api.alpaca.markets/v2'
 NTFY_URL = os.environ.get('NTFY_URL', 'https://ntfy.sh/my-stock-report-kenya')
 
 # ============================================
-#  TRADING RULES & PARAMETERS
+# 📊 TRADING RULES & PARAMETERS
 # ============================================
 BUY_SIGNAL_THRESHOLD = 60        # Buy when signal >= 60
 SELL_SIGNAL_THRESHOLD = 30       # Sell when signal <= 30
@@ -40,17 +40,20 @@ STOCKS_TO_TRADE = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA']
 # ============================================
 
 def send_notification(title, message, priority=3):
-    """Send notification to ntfy"""
+    """Send a clean notification to ntfy"""
     try:
+        # Extract just the topic name from the URL
+        topic = NTFY_URL.split('/')[-1]
+        
+        # Send as plain text with headers (looks much better on mobile)
         response = requests.post(
-            NTFY_URL,
-            json={
-                "topic": NTFY_URL.split('/')[-1],
-                "title": title,
-                "message": message,
-                "priority": priority
-            },
-            headers={"Content-Type": "application/json"}
+            f"https://ntfy.sh/{topic}",
+            data=message.encode('utf-8'),
+            headers={
+                "Title": title,
+                "Priority": str(priority),
+                "Tags": "robot,chart_with_upwards_trend"
+            }
         )
         print(f"✅ Notification sent: {title}")
         return response.status_code == 200
@@ -97,7 +100,7 @@ def is_market_open():
         
         # Check if weekend
         if now_et.weekday() >= 5:  # Saturday=5, Sunday=6
-            print(" Market is CLOSED (Weekend)")
+            print("📅 Market is CLOSED (Weekend)")
             return False
         
         # Check market hours (9:30 AM - 4:00 PM ET)
@@ -108,10 +111,10 @@ def is_market_open():
             print(f"✅ Market is OPEN (Current ET time: {now_et.strftime('%H:%M')})")
             return True
         else:
-            print(f" Market is CLOSED (Current ET time: {now_et.strftime('%H:%M')})")
+            print(f"📅 Market is CLOSED (Current ET time: {now_et.strftime('%H:%M')})")
             return False
     except Exception as e:
-        print(f"❌ Error checking market hours: {e}")
+        print(f" Error checking market hours: {e}")
         return False
 
 def get_vix_level():
@@ -237,7 +240,7 @@ def sell_stock(symbol, qty=None, reason=""):
             result = response.json()
             print(f"✅ SOLD {symbol} - Reason: {reason}")
             send_notification(
-                "📉 SELL ORDER",
+                " SELL ORDER",
                 f"Sold {symbol}\nReason: {reason}\nTime: {datetime.now().strftime('%H:%M')}"
             )
             return True
@@ -280,7 +283,7 @@ def run_trading_bot():
     """Main trading bot function"""
     print("="*60)
     print("🤖 AI TRADING BOT STARTING")
-    print(f"📅 Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f" Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*60)
     
     # Rule 1: Check if market is open
@@ -292,8 +295,8 @@ def run_trading_bot():
     # Rule 2: Check VIX (volatility)
     vix = get_vix_level()
     if vix > 30:
-        print(f"⚠️ VIX too high ({vix}). Market too volatile. Skipping.")
-        send_notification("⚠️ Bot Skipped", f"VIX too high: {vix}. Market too volatile.")
+        print(f"️ VIX too high ({vix}). Market too volatile. Skipping.")
+        send_notification("️ Bot Skipped", f"VIX too high: {vix}. Market too volatile.")
         return
     
     # Rule 3: Get account info
@@ -312,7 +315,7 @@ def run_trading_bot():
         print(f"   - {pos['symbol']}: {pos['qty']} shares")
     
     # Rule 5: Check profit/loss on existing positions
-    print("\n Checking profit/loss...")
+    print("\n🔍 Checking profit/loss...")
     check_profit_loss(positions)
     
     # Rule 6: Get market signal
@@ -332,7 +335,7 @@ def run_trading_bot():
             return
         
         if len(positions) >= MAX_STOCKS:
-            print(f"⚠️ Already have {len(positions)} stocks (max: {MAX_STOCKS})")
+            print(f"️ Already have {len(positions)} stocks (max: {MAX_STOCKS})")
             return
         
         print(f"\n💵 Buying with ${available_cash:,.2f} (keeping ${reserve:,.2f} reserve)")
@@ -362,7 +365,7 @@ def run_trading_bot():
                 sell_stock(pos['symbol'], reason=f"Low signal {signal}/100")
             
             send_notification(
-                "⚠️ DANGER ZONE",
+                "️ DANGER ZONE",
                 f"Signal: {signal}/100\nAction: Sold all positions\nReason: Market too weak"
             )
         else:
@@ -370,7 +373,7 @@ def run_trading_bot():
             send_notification("⚠️ Danger Zone", f"Signal {signal}/100 but no positions to sell")
             
     else:
-        print(f"\n️ SIGNAL: {signal}/100 - HOLDING")
+        print(f"\n⏸️ SIGNAL: {signal}/100 - HOLDING")
         send_notification(
             "⏸️ Bot Complete",
             f"Signal: {signal}/100\nAction: Holding positions\nStatus: Neutral market"
