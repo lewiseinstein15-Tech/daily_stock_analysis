@@ -1,16 +1,18 @@
-name: 🤖 Automated Trading Bot
+name:  Automated Trading Bot
 
 on:
   schedule:
-    # Run every weekday at 9:30 AM ET (Market Open)
-    # 14:30 UTC = 9:30 AM ET (during Daylight Saving Time)
+    # Run every 2 hours during market hours (Mon-Fri)
+    # 9:30 AM ET (Market Open)
     - cron: '30 14 * * 1-5'
-    
-    # Run every weekday at 2:00 PM ET (Mid-day check)
-    # 19:00 UTC = 2:00 PM ET (during Daylight Saving Time)
-    - cron: '00 19 * * 1-5'
+    # 11:30 AM ET
+    - cron: '30 16 * * 1-5'
+    # 1:30 PM ET
+    - cron: '30 18 * * 1-5'
+    # 3:00 PM ET (Before market close)
+    - cron: '00 20 * * 1-5'
   
-  # Allow you to trigger it manually anytime
+  # Manual trigger
   workflow_dispatch:
 
 jobs:
@@ -35,10 +37,9 @@ jobs:
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
-          NTFY_URL: ${{ secrets.NTFY_URL }}
         run: python automated_trading_bot.py
       
       - name: Notify if failed
         if: failure()
         run: |
-          curl -d "title=❌ Trading Bot Failed&message=GitHub Actions failed at $(date)" ${{ secrets.NTFY_URL }}
+          curl -d "title=Bot Failed&message=GitHub Actions failed" ${{ secrets.NTFY_URL }}
