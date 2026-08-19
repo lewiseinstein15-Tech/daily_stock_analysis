@@ -1,0 +1,55 @@
+name: 📬 Repo Update Monitor
+
+on:
+  schedule:
+    # Check for updates every day at 8:00 AM UTC
+    - cron: '0 8 * * *'
+  
+  # Allow manual trigger
+  workflow_dispatch:
+
+jobs:
+  check-updates:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Check for upstream updates
+        id: check
+        run: |
+          git remote add upstream https://github.com/ZhuLinsen/daily_stock_analysis.git
+          git fetch upstream
+          
+          # Get commit counts
+          LOCAL_COMMITS=$(git rev-list --count HEAD)
+          UPSTREAM_COMMITS=$(git rev-list --count upstream/main)
+          BEHIND=$((UPSTREAM_COMMITS - LOCAL_COMMITS))
+          
+          if [ $BEHIND -gt 0 ]; then
+            echo "behind=true" >> $GITHUB_OUTPUT
+            echo "commits_behind=$BEHIND" >> $GITHUB_OUTPUT
+            
+            # Get latest commit message
+            LATEST_MSG=$(git log upstream/main -1 --pretty=format:"%s" | head -c 100)
+            echo "latest_message=$LATEST_MSG" >> $GITHUB_OUTPUT
+          else
+            echo "behind=false" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Send notification if updates available
+        if: steps.check.outputs.behind == 'true'
+        run: |
+          curl -d "title=🔄 Repo Update Available&message=Your fork is ${{ steps.check.outputs.commits_behind }} commits behind\n\nLatest update: ${{ steps.check.outputs.latest_message }}\n\nClick to sync: https://github.com/${{ github.repository }}/actions" ${{ secrets.NTFY_URL }}
+          
+          echo "Updates available!"
+          echo "Commits behind: ${{ steps.check.outputs.commits_behind }}"
+          echo "Latest: ${{ steps.check.outputs.latest_message }}"
+      
+      - name: Send all-clear notification
+        if: steps.check.outputs.behind == 'false'
+        run: |
+          curl -d "title=✅ Repo Up to Date&message=Your fork is synchronized with upstream" ${{ secrets.NTFY_URL }}
