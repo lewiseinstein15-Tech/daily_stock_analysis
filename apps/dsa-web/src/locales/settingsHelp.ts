@@ -737,6 +737,24 @@ const settingsHelpZhCN: SettingsHelpMap = {
     impact: ['影响数据源、LLM、搜索和通知等外部网络请求。'],
     notes: ['不要把代理地址写成只在本机可见但容器不可达的 127.0.0.1。'],
   },
+  'settings.jexi': {
+    title: 'JEXI 多智能体增强层',
+    summary: 'J.E.X.I.（Joint Executive & eXecution Intelligence）的专用配置。',
+    usage: '开启 JEXI_ENABLED 后，可在 CLI/调度中运行 boss-agent 分析、历史纸面模拟与自改进循环；所有交易均为纸面/研究用途。',
+    valueNotes: [
+      '默认关闭：不配置任何 JEXI_* 变量也不影响现有分析流程（不配置也可运行）。',
+      '通知复用 ntfy：JEXI_NTFY_URL 优先，其次 NTFY_URL，最后 JEXI_NTFY_SERVER + JEXI_NTFY_TOPIC。',
+      '收敛目标 JEXI_TARGET_* 用于自改进循环的通过判定。',
+    ],
+    impact: ['影响 Jexi 报告推送、纸面模拟与自适应权重更新。'],
+    notes: ['全部 50 位 specialist 由 src/jexi/personas.yaml 声明；详见 docs/jexi-architecture.md。'],
+    docs: [
+      {
+        label: 'JEXI 架构与配置说明',
+        href: 'https://github.com/lewiseinstein15-Tech/daily_stock_analysis/blob/main/docs/jexi-architecture.md',
+      },
+    ],
+  },
   'settings.llm_channel.channel_name': {
     title: '渠道名称',
     summary: '渠道名称用于生成 LLM_<NAME>_* 环境变量。',
@@ -1948,6 +1966,24 @@ const settingsHelpEnUS: SettingsHelpMap = {
     valueNotes: ['Whether it applies depends on the underlying library and environment handling.'],
     impact: ['Affects data sources, LLM, search, and notification network calls.'],
     notes: ['Inside containers, 127.0.0.1 points to the container, not the host machine.'],
+  },
+  'settings.jexi': {
+    title: 'JEXI Agent Layer',
+    summary: 'Dedicated settings for J.E.X.I. (Joint Executive & eXecution Intelligence).',
+    usage: 'With JEXI_ENABLED=true, run boss-agent analysis, historical paper sim, and the self-improvement loop via CLI/scheduler. All trading is paper/research only.',
+    valueNotes: [
+      'Off by default: setting nothing still keeps the existing analysis flow untouched (runs without configuration).',
+      'ntfy is reused: JEXI_NTFY_URL takes priority, then NTFY_URL, then JEXI_NTFY_SERVER + JEXI_NTFY_TOPIC.',
+      'JEXI_TARGET_* drive the pass/fail gates of the self-improvement loop.',
+    ],
+    impact: ['Affects Jexi report pushes, paper simulation, and adaptive specialist weights.'],
+    notes: ['All 50 specialists are declared in src/jexi/personas.yaml; see docs/jexi-architecture.md.'],
+    docs: [
+      {
+        label: 'JEXI Architecture & Config',
+        href: 'https://github.com/lewiseinstein15-Tech/daily_stock_analysis/blob/main/docs/jexi-architecture.md',
+      },
+    ],
   },
   'settings.llm_channel.channel_name': {
     title: 'Channel Name',

@@ -1080,6 +1080,27 @@ class Config:
     ntfy_url: Optional[str] = None
     ntfy_token: Optional[str] = None
 
+    # J.E.X.I. agent layer 配置（可选增强；默认关闭，不影响现有分析流程）
+    jexi_enabled: bool = False
+    jexi_ntfy_url: Optional[str] = None                 # JEXI_NTFY_URL，优先于 NTFY_URL
+    jexi_ntfy_server: Optional[str] = None              # 默认 https://ntfy.sh
+    jexi_ntfy_topic: str = 'jexi_reports'
+    jexi_ntfy_token: Optional[str] = None
+    jexi_max_iterations: int = 10
+    jexi_target_win_rate: float = 0.55
+    jexi_target_sharpe: float = 1.2
+    jexi_target_max_drawdown: float = 0.15
+    jexi_target_min_total_return: float = 0.05
+    jexi_risk_per_trade: float = 0.02                   # 单笔风险上限（止损距离比例）
+    jexi_max_position_fraction: float = 0.25
+    jexi_max_drawdown_halt: float = 0.10                # fail-safe：回撤超限暂停
+    jexi_specialists: Optional[str] = None              # 逗号分隔的 specialist id 子集
+    jexi_research_backend: str = 'off'                  # off|auto|opencode_cli|litellm；LLM 研究模式
+    jexi_regime_gate: bool = False                      # Prof Thorne 市场状态方向门槛（回测增强，默认关）
+    jexi_mcp_enabled: bool = False
+    jexi_mcp_servers: Optional[str] = None              # JSON 数组：[{name,command,args,env}]
+    jexi_report_interval_hours: int = 1
+
     # Gotify 配置（server base URL；sender 会拼接 /message）
     gotify_url: Optional[str] = None
     gotify_token: Optional[str] = None
@@ -2046,6 +2067,25 @@ class Config:
             pushover_api_token=os.getenv('PUSHOVER_API_TOKEN'),
             ntfy_url=os.getenv('NTFY_URL'),
             ntfy_token=os.getenv('NTFY_TOKEN'),
+            jexi_enabled=os.getenv('JEXI_ENABLED', 'false').lower() == 'true',
+            jexi_ntfy_url=os.getenv('JEXI_NTFY_URL'),
+            jexi_ntfy_server=os.getenv('JEXI_NTFY_SERVER'),
+            jexi_ntfy_topic=os.getenv('JEXI_NTFY_TOPIC', 'jexi_reports'),
+            jexi_ntfy_token=os.getenv('JEXI_NTFY_TOKEN'),
+            jexi_max_iterations=int(os.getenv('JEXI_MAX_ITERATIONS', '10')),
+            jexi_target_win_rate=parse_env_float(os.getenv('JEXI_TARGET_WIN_RATE'), 0.55, field_name='JEXI_TARGET_WIN_RATE'),
+            jexi_target_sharpe=parse_env_float(os.getenv('JEXI_TARGET_SHARPE'), 1.2, field_name='JEXI_TARGET_SHARPE'),
+            jexi_target_max_drawdown=parse_env_float(os.getenv('JEXI_TARGET_MAX_DRAWDOWN'), 0.15, field_name='JEXI_TARGET_MAX_DRAWDOWN'),
+            jexi_target_min_total_return=parse_env_float(os.getenv('JEXI_TARGET_MIN_TOTAL_RETURN'), 0.05, field_name='JEXI_TARGET_MIN_TOTAL_RETURN'),
+            jexi_risk_per_trade=parse_env_float(os.getenv('JEXI_RISK_PER_TRADE'), 0.02, field_name='JEXI_RISK_PER_TRADE'),
+            jexi_max_position_fraction=parse_env_float(os.getenv('JEXI_MAX_POSITION_FRACTION'), 0.25, field_name='JEXI_MAX_POSITION_FRACTION'),
+            jexi_max_drawdown_halt=parse_env_float(os.getenv('JEXI_MAX_DRAWDOWN_HALT'), 0.10, field_name='JEXI_MAX_DRAWDOWN_HALT'),
+            jexi_specialists=os.getenv('JEXI_SPECIALISTS'),
+            jexi_research_backend=(os.getenv('JEXI_RESEARCH_BACKEND') or 'off').strip().lower(),
+            jexi_regime_gate=os.getenv('JEXI_REGIME_GATE', '').strip().lower() in ('1', 'true', 'yes', 'on'),
+            jexi_mcp_enabled=os.getenv('JEXI_MCP_ENABLED', 'false').lower() == 'true',
+            jexi_mcp_servers=os.getenv('JEXI_MCP_SERVERS'),
+            jexi_report_interval_hours=int(os.getenv('JEXI_REPORT_INTERVAL_HOURS', '1')),
             gotify_url=os.getenv('GOTIFY_URL'),
             gotify_token=os.getenv('GOTIFY_TOKEN'),
             pushplus_token=os.getenv('PUSHPLUS_TOKEN'),
