@@ -4,44 +4,123 @@ on:
   schedule:
     # Sync every day at 6:00 AM UTC
     - cron: '0 6 * * *'
-  
+
   # Allow manual trigger
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 15
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
+          ref: main
           fetch-depth: 0
-      
+
       - name: Sync with upstream
         id: sync
         run: |
-          git remote add upstream https://github.com/ZhuLinsen/daily_stock_analysis.git
-          git fetch upstream
-          
-          # Check if we need to sync
-          LOCAL=$(git rev-parse HEAD)
-          UPSTREAM=$(git rev-parse upstream/main)
-          
-          if [ "$LOCAL" != "$UPSTREAM" ]; then
-            echo "needs_sync=true" >> $GITHUB_OUTPUT
-            git merge upstream/main --allow-unrelated-histories --no-edit || echo "Merge conflicts"
-            git push origin main || echo "Push failed"
-          else
-            echo "needs_sync=false" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          UPSTREAM_URL="https://github.com/ZhuLinsen/daily_stock_analysis.git"
+          git remote add upstream "$UPSTREAM_URL" || git remote set-url upstream "$UPSTREAM_URL"
+          git fetch upstream main
+
+          # Correct commits-behind/ahead math for diverged histories:
+          # range counts, NOT a subtraction of total commit counts.
+          BEHIND=$(git rev-list --count HEAD..upstream/main)
+          AHEAD=$(git rev-list --count upstream/main..HEAD)
+          echo "behind=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "ahead=$AHEAD" >> "$GITHUB_OUTPUT"
+
+          if [ "$BEHIND" -eq 0 ]; then
+            echo "needs_sync=false" >> "$GITHUB_OUTPUT"
+            echo "Already up to date with upstream/main (local commits ahead: $AHEAD)."
+            exit 0
           fi
-      
-      - name: Notify if synced
-        if: steps.sync.outputs.needs_sync == 'true'
+
+          echo "needs_sync=true" >> "$GITHUB_OUTPUT"
+          echo "Fork is $BEHIND commit(s) behind upstream/main — merging..."
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git merge upstream/main --no-edit -m "chore: sync fork with upstream/main (auto)"; then
+            if git push origin main; then
+              echo "synced=true" >> "$GITHUB_OUTPUT"
+              echo "Sync complete: merged $BEHIND upstream commit(s) and pushed to origin/main."
+            else
+              echo "synced=false" >> "$GITHUB_OUTPUT"
+              echo "::error::Merge succeeded but push to origin/main failed."
+              exit 1
+            fi
+          else
+            # Never push a conflicted or half-finished merge: abort cleanly and
+            # let the notification step raise a merge-conflict alert.
+            git merge --abort || true
+            echo "synced=false" >> "$GITHUB_OUTPUT"
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Merge conflict with upstream/main — automatic sync aborted, manual resolution required."
+            exit 1
+          fi
+
+      - name: Notify sync result (ntfy JSON publish API)
+        if: always()
+        env:
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          SYNCED: ${{ steps.sync.outputs.synced }}
+          CONFLICT: ${{ steps.sync.outputs.conflict }}
+          NEEDS_SYNC: ${{ steps.sync.outputs.needs_sync }}
+          BEHIND: ${{ steps.sync.outputs.behind }}
+          AHEAD: ${{ steps.sync.outputs.ahead }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          curl -d "title=✅ Repo Auto-Synced&message=Successfully synced with upstream repository\n\nYour trading bot files are safe!" ${{ secrets.NTFY_URL }}
-      
-      - name: Notify if already synced
-        if: steps.sync.outputs.needs_sync == 'false'
-        run: |
-          curl -d "title=✅ Repo Up to Date&message=No sync needed - already current" ${{ secrets.NTFY_URL }}
+          set -euo pipefail
+          if [ -z "${NTFY_URL:-}" ]; then
+            echo "NTFY_URL secret not set — skipping notification."
+            exit 0
+          fi
+          # NTFY_URL must include the topic path, e.g. https://ntfy.sh/my-topic
+          TOPIC="${NTFY_URL##*/}"
+          SERVER="${NTFY_URL%/*}"
+          if [ -z "$TOPIC" ] || [ "$SERVER" = "$NTFY_URL" ]; then
+            echo "::error::NTFY_URL must be a full topic endpoint like https://ntfy.sh/my-topic"
+            exit 1
+          fi
+          AUTH_ARGS=()
+          if [ -n "${NTFY_TOKEN:-}" ]; then AUTH_ARGS=(-H "Authorization: Bearer ${NTFY_TOKEN}"); fi
+          notify() {
+            jq -n \
+              --arg topic "$TOPIC" \
+              --arg title "$1" \
+              --arg message "$2" \
+              --argjson priority "$3" \
+              '{topic: $topic, title: $title, message: $message, priority: $priority}' \
+            | curl --fail -sS -X POST "$SERVER" \
+                -H "Content-Type: application/json" \
+                "${AUTH_ARGS[@]}" \
+                -d @-
+          }
+
+          if [ "${SYNCED:-}" = "true" ]; then
+            notify "✅ Repo Auto-Synced" \
+              "Merged ${BEHIND:-0} upstream commit(s) into main and pushed. Local commits ahead of upstream: ${AHEAD:-0}. Your trading bot files are safe. Run: $RUN_URL" \
+              3
+          elif [ "${CONFLICT:-}" = "true" ]; then
+            notify "🚨 Fork sync CONFLICT — manual action needed" \
+              "Automatic merge with upstream/main hit conflicts and was safely aborted (nothing was pushed). Fork was ${BEHIND:-0} commit(s) behind. Resolve manually, then re-run: $RUN_URL" \
+              5
+          elif [ "${NEEDS_SYNC:-}" = "false" ]; then
+            notify "✅ Repo Up to Date" \
+              "No sync needed — main already contains everything from upstream/main. Local commits ahead: ${AHEAD:-0}." \
+              2
+          else
+            notify "❌ Auto-sync failed" \
+              "The auto-sync workflow did not complete (push failed or unexpected error — see annotations). Details: $RUN_URL" \
+              5
+          fi
