@@ -2,7 +2,7 @@ name:  Automated Trading Bot
 
 on:
   schedule:
-    # Run every 2 hours during market hours (Mon-Fri)
+    # Run every 2 hours during market hours (Mon-Fri, UTC)
     # 9:30 AM ET (Market Open)
     - cron: '30 14 * * 1-5'
     # 11:30 AM ET
@@ -11,35 +11,91 @@ on:
     - cron: '30 18 * * 1-5'
     # 3:00 PM ET (Before market close)
     - cron: '00 20 * * 1-5'
-  
+
   # Manual trigger
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force run even when the US market is closed'
+        required: false
+        default: false
+        type: boolean
+      dry_run:
+        description: 'Dry run (plan + report only, never submit orders)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
 
 jobs:
   trading-bot:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 15
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
-      
+        uses: actions/checkout@v5
+
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-      
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests pytz
-      
+          # requests/pytz: bot core. pandas/numpy/python-dotenv/pydantic/
+          # tenacity/fake_useragent: allow the bot's ResearchAgent to import
+          # the repo's own analysis engine (src.stock_analyzer). Without them
+          # it degrades gracefully to the built-in technical scorer.
+          pip install requests pytz pandas numpy python-dotenv pydantic tenacity fake_useragent
+
       - name: Run Trading Bot
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+          APCA_API_BASE_URL: ${{ vars.APCA_API_BASE_URL || 'https://paper-api.alpaca.markets' }}
+          NTFY_SERVER: ${{ vars.NTFY_SERVER || 'https://ntfy.sh' }}
+          NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'my-stock-report-kenya' }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          STOCKS_TO_TRADE: ${{ vars.STOCKS_TO_TRADE || 'AAPL,MSFT,NVDA' }}
+          BOT_FORCE_RUN: ${{ inputs.force }}
+          BOT_DRY_RUN: ${{ inputs.dry_run }}
         run: python automated_trading_bot.py
-      
-      - name: Notify if failed
+
+      - name: Notify if failed (ntfy JSON publish API)
         if: failure()
+        env:
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+          NTFY_SERVER: ${{ vars.NTFY_SERVER || 'https://ntfy.sh' }}
+          NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'my-stock-report-kenya' }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          curl -d "title=Bot Failed&message=GitHub Actions failed" ${{ secrets.NTFY_URL }}
+          set -euo pipefail
+          # Prefer NTFY_URL secret (https://server/topic); fall back to
+          # NTFY_SERVER + NTFY_TOPIC variables used by the bot itself.
+          if [ -n "${NTFY_URL:-}" ]; then
+            TOPIC="${NTFY_URL##*/}"
+            SERVER="${NTFY_URL%/*}"
+          else
+            TOPIC="${NTFY_TOPIC:-}"
+            SERVER="${NTFY_SERVER:-}"
+          fi
+          if [ -z "${TOPIC:-}" ] || [ -z "${SERVER:-}" ] || [ "$SERVER" = "${NTFY_URL:-}" ]; then
+            echo "No usable ntfy destination configured (set NTFY_URL secret or NTFY_TOPIC/NTFY_SERVER vars)."
+            exit 0
+          fi
+          AUTH_ARGS=()
+          if [ -n "${NTFY_TOKEN:-}" ]; then AUTH_ARGS=(-H "Authorization: Bearer ${NTFY_TOKEN}"); fi
+          jq -n \
+            --arg topic "$TOPIC" \
+            --arg title "❌ Trading bot run failed" \
+            --arg message "The automated trading bot workflow failed. The bot may not have sent its cycle report. Open the run log: $RUN_URL" \
+            '{topic: $topic, title: $title, message: $message, priority: 5, tags: ["warning"]}' \
+          | curl --fail -sS -X POST "$SERVER" \
+              -H "Content-Type: application/json" \
+              "${AUTH_ARGS[@]}" \
+              -d @-
