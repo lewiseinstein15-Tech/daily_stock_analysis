@@ -1,38 +1,19 @@
-name:  Automated Trading Bot
+name: 🌙 Overnight Agent Research
 
 on:
   schedule:
-    # Run every 2 hours during market hours (Mon-Fri, UTC)
-    # 9:30 AM ET (Market Open)
-    - cron: '30 14 * * 1-5'
-    # 11:30 AM ET
-    - cron: '30 16 * * 1-5'
-    # 1:30 PM ET
-    - cron: '30 18 * * 1-5'
-    # 3:00 PM ET (Before market close)
-    - cron: '00 20 * * 1-5'
-
-  # Manual trigger
+    # Research runs outside the trading window too, but is hard-wired to
+    # research-only + dry-run: it can never submit an order.
+    - cron: '0 */4 * * 1-5'
   workflow_dispatch:
-    inputs:
-      force:
-        description: 'Force run even when the US market is closed'
-        required: false
-        default: false
-        type: boolean
-      dry_run:
-        description: 'Dry run (plan + report only, never submit orders)'
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
 
 jobs:
-  trading-bot:
+  research:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -43,30 +24,34 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install deterministic research dependencies
+        env:
+          BOT_USE_LLM_AGENTS: ${{ vars.BOT_USE_LLM_AGENTS || 'false' }}
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
-          # requests/pytz: bot core. pandas/numpy/python-dotenv/pydantic/
-          # tenacity/fake_useragent: allow the bot's ResearchAgent to import
-          # the repo's own analysis engine (src.stock_analyzer). Without them
-          # it degrades gracefully to the built-in technical scorer.
           pip install requests pytz pandas numpy python-dotenv pydantic tenacity fake_useragent
+          # The repository multi-agent council is opt-in.  Do not add an LLM
+          # package or incur provider cost on a normal overnight run.
+          if [ "${BOT_USE_LLM_AGENTS:-false}" = "true" ]; then
+            pip install litellm json-repair tiktoken openai jinja2 markdown2
+          fi
 
-      - name: Run Trading Bot
+      - name: Run paper research council (never trades)
         env:
           ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
           ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
           APCA_API_BASE_URL: ${{ vars.APCA_API_BASE_URL || 'https://paper-api.alpaca.markets' }}
           ALPACA_DATA_BASE_URL: ${{ vars.ALPACA_DATA_BASE_URL || 'https://data.alpaca.markets' }}
-          # NTFY_URL is the canonical full endpoint; the bot also accepts the
-          # legacy NTFY_SERVER/NTFY_TOPIC pair for existing configurations.
           NTFY_URL: ${{ secrets.NTFY_URL }}
           NTFY_SERVER: ${{ vars.NTFY_SERVER || 'https://ntfy.sh' }}
           NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'my-stock-report-kenya' }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
           STOCKS_TO_TRADE: ${{ vars.STOCKS_TO_TRADE || 'AAPL,MSFT,NVDA' }}
-          BOT_PAPER_ONLY: ${{ vars.BOT_PAPER_ONLY || 'true' }}
-          BOT_ALLOW_LIVE_TRADING: ${{ vars.BOT_ALLOW_LIVE_TRADING || 'false' }}
+          BOT_RESEARCH_ONLY: 'true'
+          BOT_DRY_RUN: 'true'
+          BOT_FORCE_RUN: 'true'
+          BOT_PAPER_ONLY: 'true'
           BOT_USE_LLM_AGENTS: ${{ vars.BOT_USE_LLM_AGENTS || 'false' }}
           BOT_LLM_AGENTS_REQUIRED: ${{ vars.BOT_LLM_AGENTS_REQUIRED || 'false' }}
           BOT_LLM_AGENT_WEIGHT: ${{ vars.BOT_LLM_AGENT_WEIGHT || '0.35' }}
@@ -77,39 +62,28 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           LITELLM_MODEL: ${{ vars.LITELLM_MODEL }}
-          BOT_FORCE_RUN: ${{ inputs.force }}
-          BOT_DRY_RUN: ${{ inputs.dry_run }}
         run: python automated_trading_bot.py
 
-      - name: Notify if failed (ntfy JSON publish API)
+      - name: Notify if research failed
         if: failure()
         env:
           NTFY_URL: ${{ secrets.NTFY_URL }}
-          NTFY_SERVER: ${{ vars.NTFY_SERVER || 'https://ntfy.sh' }}
-          NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'my-stock-report-kenya' }}
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          # Prefer NTFY_URL secret (https://server/topic); fall back to
-          # NTFY_SERVER + NTFY_TOPIC variables used by the bot itself.
-          if [ -n "${NTFY_URL:-}" ]; then
-            TOPIC="${NTFY_URL##*/}"
-            SERVER="${NTFY_URL%/*}"
-          else
-            TOPIC="${NTFY_TOPIC:-}"
-            SERVER="${NTFY_SERVER:-}"
-          fi
-          if [ -z "${TOPIC:-}" ] || [ -z "${SERVER:-}" ] || [ "$SERVER" = "${NTFY_URL:-}" ]; then
-            echo "No usable ntfy destination configured (set NTFY_URL secret or NTFY_TOPIC/NTFY_SERVER vars)."
+          if [ -z "${NTFY_URL:-}" ]; then
+            echo "NTFY_URL secret not set — skipping failure notification."
             exit 0
           fi
+          TOPIC="${NTFY_URL##*/}"
+          SERVER="${NTFY_URL%/*}"
           AUTH_ARGS=()
           if [ -n "${NTFY_TOKEN:-}" ]; then AUTH_ARGS=(-H "Authorization: Bearer ${NTFY_TOKEN}"); fi
           jq -n \
             --arg topic "$TOPIC" \
-            --arg title "❌ Trading bot run failed" \
-            --arg message "The automated trading bot workflow failed. The bot may not have sent its cycle report. Open the run log: $RUN_URL" \
+            --arg title "❌ Overnight research failed" \
+            --arg message "The paper-only overnight research workflow failed. Inspect the run: $RUN_URL" \
             '{topic: $topic, title: $title, message: $message, priority: 5, tags: ["warning"]}' \
           | curl --fail -sS -X POST "$SERVER" \
               -H "Content-Type: application/json" \

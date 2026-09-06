@@ -44,6 +44,9 @@ Environment (see .env.example → "Automated Trading Bot"):
   NTFY_TOPIC / NTFY_SERVER / NTFY_TOKEN  notification channel
   BOT_FORCE_RUN=1                        trade even when market closed (manual runs)
   BOT_DRY_RUN=1                          plan + report, but never submit orders
+  BOT_RESEARCH_ONLY=1                    run the agent/data audit without orders, even when closed
+  BOT_PAPER_ONLY=1                       fail closed for non-paper Alpaca endpoints (default)
+  BOT_USE_LLM_AGENTS=1                   reuse the repository multi-agent stack as advisory evidence
   threshold/sizing overrides             see BotConfig.from_env
 """
 
@@ -53,8 +56,9 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, time as dtime
+from datetime import datetime, time as dtime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote, unquote, urlparse, urlunparse
 
 import requests
 
@@ -125,6 +129,59 @@ DEFAULT_NTFY_TOPIC = "my-stock-report-kenya"
 DEFAULT_NTFY_MESSAGE_BYTE_LIMIT = 3900
 
 
+def resolve_ntfy_url(ntfy_url: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """Resolve a complete ``NTFY_URL`` into ``(server, topic)``.
+
+    The main application already documents ``NTFY_URL=https://server/topic``.
+    The trading workflow previously used a separate ``NTFY_SERVER`` /
+    ``NTFY_TOPIC`` pair and silently ignored that documented setting.  Keeping
+    the parser here makes the standalone bot and the rest of the repository
+    accept the same configuration, including a reverse-proxy path prefix.
+    """
+    raw_url = (ntfy_url or "").strip().rstrip("/")
+    if not raw_url:
+        return None, None
+    parsed = urlparse(raw_url)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+        return None, None
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    if not segments:
+        return None, None
+    topic = unquote(segments[-1]).strip()
+    if not topic:
+        return None, None
+    prefix = "/".join(segments[:-1])
+    server = urlunparse(
+        parsed._replace(
+            path=f"/{prefix}" if prefix else "",
+            params="",
+            query="",
+            fragment="",
+        )
+    ).rstrip("/")
+    return server, topic
+
+
+def _is_local_endpoint(url: str) -> bool:
+    """Allow localhost endpoints used by the deterministic paper simulator."""
+    try:
+        hostname = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    return hostname in {"127.0.0.1", "localhost", "0.0.0.0", "::1"}
+
+
+def _is_paper_trading_endpoint(url: str) -> bool:
+    """Return whether an Alpaca endpoint is paper or an explicit local test."""
+    if _is_local_endpoint(url):
+        return True
+    try:
+        hostname = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return False
+    return hostname == "paper-api.alpaca.markets" or hostname.endswith(".paper-api.alpaca.markets")
+
+
 @dataclass
 class BotConfig:
     api_key: Optional[str] = None
@@ -139,6 +196,16 @@ class BotConfig:
     ntfy_timeout: float = 15.0
     ntfy_message_byte_limit: int = DEFAULT_NTFY_MESSAGE_BYTE_LIMIT
     notify_when_closed: bool = True
+
+    # Safety and operation modes.  The bot is paper-only unless the operator
+    # explicitly opts into a non-paper endpoint *and* sets the live-trading
+    # acknowledgement flag.  Dry-run/research-only modes never submit orders.
+    paper_only: bool = True
+    allow_live_trading: bool = False
+    research_only: bool = False
+    use_llm_agents: bool = False
+    llm_agents_required: bool = False
+    llm_agent_weight: float = 0.35
 
     # Trading rules
     buy_signal_threshold: int = 60        # buy when score >= 60
@@ -161,17 +228,29 @@ class BotConfig:
 
     @classmethod
     def from_env(cls) -> "BotConfig":
+        # NTFY_URL is the repository-wide canonical form.  Keep the legacy
+        # server/topic pair for existing Actions variables and local .env files.
+        ntfy_server_from_url, ntfy_topic_from_url = resolve_ntfy_url(os.environ.get("NTFY_URL"))
+        ntfy_server = ntfy_server_from_url or (os.environ.get("NTFY_SERVER") or DEFAULT_NTFY_SERVER).rstrip("/")
+        ntfy_topic = ntfy_topic_from_url or (os.environ.get("NTFY_TOPIC") or DEFAULT_NTFY_TOPIC).strip()
+        llm_weight = max(0.0, min(1.0, _env_float("BOT_LLM_AGENT_WEIGHT", 0.35)))
         return cls(
             api_key=(os.environ.get("ALPACA_API_KEY") or "").strip() or None,
             secret_key=(os.environ.get("ALPACA_SECRET_KEY") or "").strip() or None,
             trading_base_url=(os.environ.get("APCA_API_BASE_URL") or DEFAULT_TRADING_BASE_URL).rstrip("/"),
             data_base_url=(os.environ.get("ALPACA_DATA_BASE_URL") or DEFAULT_DATA_BASE_URL).rstrip("/"),
-            ntfy_server=(os.environ.get("NTFY_SERVER") or DEFAULT_NTFY_SERVER).rstrip("/"),
-            ntfy_topic=(os.environ.get("NTFY_TOPIC") or DEFAULT_NTFY_TOPIC).strip(),
+            ntfy_server=ntfy_server,
+            ntfy_topic=ntfy_topic,
             ntfy_token=(os.environ.get("NTFY_TOKEN") or "").strip() or None,
             ntfy_timeout=_env_float("NTFY_TIMEOUT", 15.0),
             ntfy_message_byte_limit=_env_int("NTFY_MESSAGE_BYTE_LIMIT", DEFAULT_NTFY_MESSAGE_BYTE_LIMIT),
             notify_when_closed=_env_bool("BOT_NOTIFY_CLOSED", True),
+            paper_only=_env_bool("BOT_PAPER_ONLY", True),
+            allow_live_trading=_env_bool("BOT_ALLOW_LIVE_TRADING", False),
+            research_only=_env_bool("BOT_RESEARCH_ONLY", False),
+            use_llm_agents=_env_bool("BOT_USE_LLM_AGENTS", False),
+            llm_agents_required=_env_bool("BOT_LLM_AGENTS_REQUIRED", False),
+            llm_agent_weight=llm_weight,
             buy_signal_threshold=_env_int("BUY_SIGNAL_THRESHOLD", 60),
             sell_signal_threshold=_env_int("SELL_SIGNAL_THRESHOLD", 30),
             take_profit_percent=_env_float("TAKE_PROFIT_PERCENT", 10.0),
@@ -241,7 +320,13 @@ class NtfyNotifier:
         """
         return (value or "").encode("latin-1", "replace").decode("latin-1").strip()[:limit]
 
-    def _send_with_attachment(self, title: str, message: str, priority: int) -> bool:
+    def _send_with_attachment(
+        self,
+        title: str,
+        message: str,
+        priority: int,
+        tags: Optional[List[str]] = None,
+    ) -> bool:
         """Send a truncated summary message plus the full report as a file."""
         # Target the well-known ntfy.sh cap unless the operator configured a
         # smaller limit; shrink adaptively if the server still answers 413
@@ -261,6 +346,7 @@ class NtfyNotifier:
                     "title": title,
                     "message": summary,
                     "priority": priority,
+                    **({"tags": list(tags)} if tags else {}),
                 }
             )
             if ok or status != 413:
@@ -271,10 +357,10 @@ class NtfyNotifier:
             print(f"[ntfy] summary publish failed (HTTP {status})")
             return False
 
-        filename = f"trading-report-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}.txt"
+        filename = f"trading-report-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.txt"
         try:
             response = requests.post(
-                f"{self.config.ntfy_server}/{self.config.ntfy_topic}",
+                f"{self.config.ntfy_server}/{quote(self.config.ntfy_topic, safe='')}",
                 data=message.encode("utf-8"),
                 headers={
                     **self._auth_headers(),
@@ -282,6 +368,7 @@ class NtfyNotifier:
                     "Filename": self._latin1_header(filename),
                     "Priority": str(priority),
                     "Message": "Full trading report attached.",
+                    **({"Tags": ",".join(tags)} if tags else {}),
                     "Content-Type": "text/plain; charset=utf-8",
                 },
                 timeout=max(self.config.ntfy_timeout, 30.0),
@@ -303,7 +390,7 @@ class NtfyNotifier:
 
         if len(message.encode("utf-8")) > self.config.ntfy_message_byte_limit:
             print("[ntfy] message too large — using attachment fallback")
-            return self._send_with_attachment(title, message, priority)
+            return self._send_with_attachment(title, message, priority, tags=tags)
 
         payload: Dict[str, Any] = {
             "topic": self.config.ntfy_topic,
@@ -320,7 +407,7 @@ class NtfyNotifier:
             return True
         if status == 413:
             print("[ntfy] server rejected size (HTTP 413) — retrying with attachment fallback")
-            return self._send_with_attachment(title, message, priority)
+            return self._send_with_attachment(title, message, priority, tags=tags)
         print(f"[ntfy] publish failed (HTTP {status})")
         return False
 
@@ -466,8 +553,21 @@ class MarketAgent:
             change = (closes[-1] - closes[0]) / closes[0] * 100.0
             score = self.score_regime(change)
             label = "BULLISH" if score >= 70 else "BEARISH" if score <= 35 else "NEUTRAL"
-            return {"score": score, "change_percent": round(change, 2), "bars": len(closes), "label": label}
-        return {"score": 50, "change_percent": 0.0, "bars": len(closes), "label": "NEUTRAL", "note": "insufficient SPY data — defaulting to neutral"}
+            return {
+                "score": score,
+                "change_percent": round(change, 2),
+                "bars": len(closes),
+                "label": label,
+                "data_ok": True,
+            }
+        return {
+            "score": 50,
+            "change_percent": 0.0,
+            "bars": len(closes),
+            "label": "NEUTRAL",
+            "data_ok": False,
+            "note": "insufficient SPY data — defaulting to neutral",
+        }
 
 
 # ============================================
@@ -501,6 +601,101 @@ class ResearchAgent:
         self.client = client
         self.config = config
         self._repo_analyzer: Any = False  # False = not loaded yet
+        self._llm_executor: Any = False   # False = not loaded; None = unavailable
+
+    # -- optional repository multi-agent advisory -----------------------------
+    def _get_llm_executor(self) -> Any:
+        """Build the fork's existing AgentExecutor/AgentOrchestrator lazily.
+
+        The automated workflow remains dependency-light and deterministic by
+        default.  When ``BOT_USE_LLM_AGENTS=1`` and the normal repository LLM
+        configuration is present, this reuses the original agent stack instead
+        of creating a second, competing LLM implementation.  Failures degrade
+        to the deterministic technical path unless the operator explicitly sets
+        ``BOT_LLM_AGENTS_REQUIRED=1``.
+        """
+        if not self.config.use_llm_agents:
+            return None
+        if self._llm_executor is not False:
+            return self._llm_executor
+        try:
+            from src.agent.factory import build_agent_executor
+            from src.config import get_config
+
+            app_config = get_config()
+            self._llm_executor = build_agent_executor(app_config)
+            return self._llm_executor
+        except Exception as exc:  # optional dependency/config/provider failures
+            print(f"[research] repository multi-agent stack unavailable ({type(exc).__name__}): {exc}")
+            self._llm_executor = None
+            return None
+
+    @staticmethod
+    def _parse_llm_dashboard(result: Any) -> Optional[Dict[str, Any]]:
+        """Extract a small, validated advisory payload from AgentResult."""
+        dashboard = getattr(result, "dashboard", None)
+        if isinstance(dashboard, dict):
+            return dashboard
+        raw = getattr(result, "content", "")
+        if not isinstance(raw, str) or not raw.strip():
+            return None
+        try:
+            parsed = json.loads(raw)
+        except (TypeError, ValueError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def _score_with_llm_agents(self, symbol: str, technical: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Ask the repository's multi-agent pipeline for advisory evidence.
+
+        This stage is advisory only: it never gets an order tool and its score
+        is blended with the deterministic signal before the RiskAgent sees it.
+        That keeps an LLM outage or hallucinated output from bypassing hard
+        position/risk controls.
+        """
+        executor = self._get_llm_executor()
+        if executor is None:
+            if self.config.llm_agents_required:
+                raise RuntimeError("BOT_LLM_AGENTS_REQUIRED is enabled but the repository agent stack is unavailable")
+            return None
+
+        prompt = (
+            f"Run a multi-agent advisory analysis for {symbol}. Do not place or propose an order. "
+            f"Use the repository's registered data tools and clearly mark missing/stale evidence. "
+            f"The Alpaca paper-data technical pre-score is {technical.get('score', 50)}/100, "
+            f"latest paper quote is {float(technical.get('price', 0) or 0):.4f}, "
+            f"and {technical.get('bars', 0)} daily bars were available. Return the normal repository decision dashboard."
+        )
+        result = executor.run(
+            prompt,
+            context={"stock_code": symbol, "report_language": "en"},
+        )
+        dashboard = self._parse_llm_dashboard(result)
+        if not dashboard:
+            if self.config.llm_agents_required:
+                raise RuntimeError(f"repository multi-agent response for {symbol} was not a dashboard")
+            return {
+                "status": "invalid",
+                "summary": str(getattr(result, "error", "no structured dashboard"))[:240],
+            }
+
+        raw_score = dashboard.get("sentiment_score")
+        try:
+            llm_score = int(round(float(raw_score)))
+        except (TypeError, ValueError):
+            decision = str(dashboard.get("decision_type", "hold")).lower()
+            llm_score = {"buy": 70, "hold": 50, "sell": 30}.get(decision, 50)
+        llm_score = max(0, min(100, llm_score))
+        return {
+            "status": "ok" if getattr(result, "success", True) else "failed",
+            "score": llm_score,
+            "signal": str(dashboard.get("decision_type", "hold")),
+            "confidence": dashboard.get("confidence_level", ""),
+            "summary": str(dashboard.get("analysis_summary", ""))[:500],
+            "risk_warning": str(dashboard.get("risk_warning", ""))[:500],
+            "model": str(getattr(result, "model", ""))[:160],
+            "agents": ["technical", "intel", "risk", "decision"],
+        }
 
     # -- price ----------------------------------------------------------------
     def latest_price(self, symbol: str) -> float:
@@ -667,6 +862,37 @@ class ResearchAgent:
             scored = self._score_builtin(symbol, bars)
         scored["price"] = price
         scored["bars"] = len(bars)
+        scored["tradeable"] = bool(price > 0 and len(bars) >= 20 and scored.get("source") != "error")
+
+        # Optional advisory council from the fork's real multi-agent runtime.
+        # The deterministic analysis remains the primary signal and the risk
+        # layer remains the only component allowed to size/submit orders.
+        if self.config.use_llm_agents:
+            try:
+                llm = self._score_with_llm_agents(symbol, scored)
+            except Exception as exc:
+                if self.config.llm_agents_required:
+                    raise
+                llm = {"status": "error", "summary": f"{type(exc).__name__}: {exc}"}
+            if llm:
+                scored["llm_advisory"] = llm
+                if llm.get("status") == "ok" and isinstance(llm.get("score"), int):
+                    weight = self.config.llm_agent_weight
+                    technical_score = int(scored.get("score", 50))
+                    scored["technical_score"] = technical_score
+                    scored["llm_score"] = int(llm["score"])
+                    scored["score"] = int(round((1.0 - weight) * technical_score + weight * llm["score"]))
+                    scored["score"] = max(0, min(100, scored["score"]))
+                    if scored["score"] >= 80:
+                        scored["signal"] = "STRONG_BUY"
+                    elif scored["score"] >= 60:
+                        scored["signal"] = "BUY"
+                    elif scored["score"] >= 40:
+                        scored["signal"] = "HOLD"
+                    elif scored["score"] >= 25:
+                        scored["signal"] = "WAIT"
+                    else:
+                        scored["signal"] = "SELL"
         return scored
 
     def research(self, symbols: List[str]) -> List[Dict[str, Any]]:
@@ -682,6 +908,34 @@ class ResearchAgent:
                      "price": 0.0, "bars": 0}
                 )
         return out
+
+
+# ============================================
+# ✅ DATA-QUALITY AGENT
+# ============================================
+
+class DataQualityAgent:
+    """Reject incomplete market evidence before it reaches the order planner."""
+
+    @staticmethod
+    def validate_research(items: List[Dict[str, Any]]) -> Dict[str, Any]:
+        valid = 0
+        warnings: List[str] = []
+        for item in items or []:
+            symbol = item.get("symbol", "?")
+            price = float(item.get("price", 0) or 0)
+            bars = int(item.get("bars", 0) or 0)
+            tradeable = bool(item.get("tradeable", price > 0 and bars >= 20))
+            if tradeable:
+                valid += 1
+            else:
+                warnings.append(f"{symbol}: quote/history incomplete — excluded from new entries")
+        return {
+            "symbols": len(items or []),
+            "tradeable_symbols": valid,
+            "warnings": warnings,
+            "ok": not warnings,
+        }
 
 
 # ============================================
@@ -779,7 +1033,16 @@ class RiskAgent:
             return entries
 
         reserve = equity * (self.config.cash_reserve_percent / 100.0)
-        investable = max(0.0, buying_power - reserve)
+        # Never size from margin buying power alone.  A leveraged paper account
+        # can report buying_power several times larger than equity; using it
+        # here would contradict the bot's equity-based risk contract.  When the
+        # broker provides cash, cap by cash as well so the reserve survives.
+        try:
+            cash_value = float(account.get("cash")) if account.get("cash") is not None else buying_power
+        except (TypeError, ValueError):
+            cash_value = buying_power
+        capital_available = min(equity, max(0.0, buying_power), max(0.0, cash_value))
+        investable = max(0.0, min(equity - reserve, capital_available - reserve))
         slot_budget = equity * (self.config.max_position_percent / 100.0)
 
         owned = {pos.get("symbol") for pos in positions or [] if pos.get("symbol")}
@@ -798,6 +1061,9 @@ class RiskAgent:
             score = int(cand.get("score", 0))
             price = float(cand.get("price", 0) or 0)
             if not symbol or price <= 0:
+                continue
+            if cand.get("tradeable") is False:
+                print(f"[risk] {symbol}: data-quality gate blocked new entry")
                 continue
             if score < self.config.buy_signal_threshold:
                 continue
@@ -879,6 +1145,7 @@ class CycleContext:
     entry_plans: List[EntryPlan] = field(default_factory=list)
     exit_results: List[Dict[str, Any]] = field(default_factory=list)
     entry_results: List[Dict[str, Any]] = field(default_factory=list)
+    data_quality: Dict[str, Any] = field(default_factory=dict)
     mode: str = "LIVE"
 
 
@@ -925,6 +1192,25 @@ class ReportAgent:
             lines.append("(no research performed this cycle)")
         lines.append("")
 
+        lines.append("── AGENT / DATA AUDIT ──")
+        quality = ctx.data_quality or {}
+        lines.append(
+            f"Data gate: {quality.get('tradeable_symbols', 0)}/{quality.get('symbols', 0)} symbols tradeable"
+        )
+        if quality.get("warnings"):
+            for warning in quality["warnings"][:5]:
+                lines.append(f"⚠️ {warning}")
+        llm_items = [item for item in ctx.research if item.get("llm_advisory")]
+        if llm_items:
+            lines.append(f"LLM council: {len(llm_items)} symbol(s) · advisory only · risk gate remains deterministic")
+            for item in llm_items[:5]:
+                advisory = item.get("llm_advisory") or {}
+                if advisory.get("summary"):
+                    lines.append(f"{item.get('symbol')}: {advisory.get('summary')}")
+        else:
+            lines.append("LLM council: disabled or unavailable; deterministic repo analysis used")
+        lines.append("")
+
         lines.append("── ACTIONS ──")
         actions = 0
         for plan, result in zip(ctx.exit_plans, ctx.exit_results):
@@ -960,13 +1246,18 @@ class ReportAgent:
         else:
             lines.append("Flat — no open positions.")
         lines.append("")
-        lines.append("Automated Trading Bot · daily_stock_analysis fork · agents: market/research/risk/execution/report")
+        lines.append(
+            "Automated Trading Bot · daily_stock_analysis fork · agents: "
+            "market/technical/intel/risk/data-quality/decision/execution/report"
+        )
         return "\n".join(lines)
 
     def send_cycle_report(self, ctx: CycleContext) -> bool:
         regime_score = (ctx.regime or {}).get("score")
         actions = len(ctx.exit_results) + len(ctx.entry_results)
-        if actions == 0:
+        if ctx.mode == "RESEARCH-ONLY":
+            mode = "RESEARCH"
+        elif actions == 0:
             mode = "HOLD"
         elif ctx.entry_results and not ctx.exit_results:
             mode = "BUY"
@@ -1010,7 +1301,7 @@ def run_cycle(
     """Run one full trading cycle. Returns process exit code."""
     config = config or BotConfig.from_env()
     notifier = notifier or NtfyNotifier(config)
-    started_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    started_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
     print("=" * 60)
     print(f"TRADING BOT CYCLE @ {started_at} UTC")
@@ -1027,6 +1318,25 @@ def run_cycle(
         print("Missing Alpaca credentials.")
         return 2
 
+    # Fail closed before any order-capable client call.  Local HTTP endpoints
+    # are accepted only for the checked-in simulator/e2e tests; real Alpaca
+    # live trading requires an explicit acknowledgement flag.
+    if (
+        not config.dry_run
+        and not config.research_only
+        and not _is_paper_trading_endpoint(config.trading_base_url)
+        and (config.paper_only or not config.allow_live_trading)
+    ):
+        message = (
+            "Refusing to trade: APCA_API_BASE_URL is not the Alpaca paper endpoint. "
+            "Use https://paper-api.alpaca.markets for fake-money testing. "
+            "The bot will not use a live endpoint unless BOT_PAPER_ONLY=false and "
+            "BOT_ALLOW_LIVE_TRADING=true are both explicitly set."
+        )
+        notifier.send("🛑 Trading safety gate", message, priority=5, tags=["warning", "lock"])
+        print(message)
+        return 3
+
     client = client or AlpacaClient(config)
     market_agent = MarketAgent(client)
     research_agent = ResearchAgent(client, config)
@@ -1034,12 +1344,13 @@ def run_cycle(
     execution_agent = ExecutionAgent(client, config)
     report_agent = ReportAgent(notifier, config)
 
-    ctx = CycleContext(started_at=started_at, mode="DRY-RUN" if config.dry_run else "LIVE")
+    cycle_mode = "RESEARCH-ONLY" if config.research_only else ("DRY-RUN" if config.dry_run else "PAPER")
+    ctx = CycleContext(started_at=started_at, mode=cycle_mode)
 
     # 1. Market clock
     ctx.market = market_agent.clock_status()
     print(f"Market open: {ctx.market['is_open']} (source: {ctx.market['source']})")
-    if not ctx.market["is_open"] and not config.force_run:
+    if not ctx.market["is_open"] and not config.force_run and not config.research_only:
         ctx.account = client.get_account()
         ctx.positions_before = client.get_positions()
         if config.notify_when_closed:
@@ -1072,9 +1383,18 @@ def run_cycle(
 
     # 4. Research every watchlist symbol with the repo's analysis engine
     ctx.research = research_agent.research(config.stocks_to_trade)
+    ctx.data_quality = DataQualityAgent.validate_research(ctx.research)
     for item in ctx.research:
         print(f"  {item['symbol']}: score {item['score']}/100 ({item['signal']}) via {item['source']} @ ${item.get('price', 0):.2f}")
     prices = {item["symbol"]: float(item.get("price", 0) or 0) for item in ctx.research}
+
+    # Research-only cycles run the same data/agent audit overnight, but have no
+    # order path at all.  This is the safe day-and-night mode for GitHub Actions.
+    if config.research_only:
+        print("Research-only cycle — exits and entries are disabled by policy")
+        ctx.positions_after = client.get_positions()
+        report_agent.send_cycle_report(ctx)
+        return 0
 
     # 5. Exits first (frees cash + de-risks), with double-sell guard
     ctx.exit_plans = risk_agent.plan_exits(ctx.positions_before, prices, open_orders, ctx.regime.get("score"))
@@ -1082,17 +1402,28 @@ def run_cycle(
     for plan in ctx.exit_plans:
         print(f"  EXIT {plan.symbol} qty {plan.qty:g} — {plan.reason}")
 
+    # Refresh the account after exits so proceeds are available to the next
+    # sizing decision.  In dry-run mode no broker state changed, so retaining
+    # the initial snapshot is correct.
+    planning_account = ctx.account
+    if ctx.exit_results and not config.dry_run:
+        planning_account = client.get_account() or ctx.account
+        ctx.account = planning_account
+
     # 6. Entries sized off equity with reserve + per-position cap.
-    # Blocked entirely in a bear regime (score <= sell threshold) — otherwise
-    # the bot would liquidate on the regime exit and immediately buy back.
+    # Blocked entirely in a bear regime or when SPY data is unavailable —
+    # otherwise the bot could buy on a fabricated neutral default.
     positions_now = client.get_positions() if ctx.exit_results and not config.dry_run else ctx.positions_before
     open_orders_now = client.get_open_orders() if ctx.exit_results and not config.dry_run else open_orders
     regime_score = ctx.regime.get("score", 50)
-    if regime_score <= config.sell_signal_threshold:
+    if not ctx.regime.get("data_ok", False):
+        print("Market regime data is incomplete — no new entries this cycle")
+        ctx.entry_plans = []
+    elif regime_score <= config.sell_signal_threshold:
         print(f"Regime {regime_score}/100 <= sell threshold {config.sell_signal_threshold} — no new entries this cycle")
         ctx.entry_plans = []
     else:
-        ctx.entry_plans = risk_agent.plan_entries(ctx.research, ctx.account, positions_now, open_orders_now)
+        ctx.entry_plans = risk_agent.plan_entries(ctx.research, planning_account or {}, positions_now, open_orders_now)
     ctx.entry_results = execution_agent.execute_entries(ctx.entry_plans)
     for plan in ctx.entry_plans:
         print(f"  ENTRY {plan.symbol} qty {plan.qty} @ ~${plan.est_price:.2f} (score {plan.score})")

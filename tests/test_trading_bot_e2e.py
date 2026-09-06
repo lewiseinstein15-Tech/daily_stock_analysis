@@ -169,6 +169,18 @@ class TradingBotE2ETestCase(unittest.TestCase):
         self.assertIn("DRY-RUN", report)
         self.assertIn("BOUGHT 266 AAPL", report)  # the PLAN is still reported
 
+    def test_e2e_research_only_runs_when_market_closed_without_orders(self):
+        SIM.reset("closed")
+        code = bot.run_cycle(config=make_cfg(research_only=True, dry_run=True))
+        self.assertEqual(code, 0)
+        self.assertEqual(SIM.captured_of("ORDER"), [])
+        pushes = SIM.captured_of("NTFY_JSON")
+        self.assertEqual(len(pushes), 1)
+        payload = pushes[0]["payload"]
+        self.assertIn("RESEARCH", payload["title"])
+        self.assertIn("Mode: RESEARCH-ONLY", payload["message"])
+        self.assertIn("AGENT / DATA AUDIT", payload["message"])
+
     # -- scenario 7: real ntfy-style 413 → summary + attachment -----------------
     def test_e2e_ntfy_413_falls_back_to_summary_plus_attachment(self):
         # Cap the simulated server BELOW the report size so the first publish
