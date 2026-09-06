@@ -71,7 +71,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ntfy-topic", default=None)
     parser.add_argument("--no-push", action="store_true", help="Never push to ntfy (STDOUT only)")
     parser.add_argument("--regime-gate", action="store_true",
-                        help="Gate consensus trades on Prof Thorne's regime (bear→no fresh longs, etc)")
+                        help="Gate consensus trades on Prof Thorne's regime (bear->no fresh longs, etc)")
+    parser.add_argument("--trend-gate", action="store_true",
+                        help="Per-asset trend floor: only long above / short below its longer SMA")
     parser.add_argument("--test-push", action="store_true", help="Send a connectivity test to ntfy")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON result")
     return parser
@@ -164,6 +166,7 @@ def _make_jexi_and_loop(args, config):
         specialist_ids=specialist_ids,
         research_backend=jexi.research_backend,
         regime_gate=bool(args.regime_gate),
+        trend_gate=bool(args.trend_gate),
     )
     return jexi, loop
 

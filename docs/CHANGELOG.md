@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] **标的自身趋势门槛**（`--trend-gate` / `JEXI_TREND_GATE`，默认关）：长仓需价格位于自身较长 SMA（100 根）之上、空仓需位于其下，直接压制 2022 熊市「抄底多头」胜率洼地。实测（2020-2025 滚动回测，默认 ticker 池）：trend gate 单独开启时 **bull 场景达标 PASS（win 75% / sharpe 1.33 / maxdd 5.2% / ret 11.9%）**，volatile 胜率 83%、5y 最大回撤 45.3%→33.5%；与 regime gate 同开时 **5y 最大回撤 14.5% 达标（≤15%）**、5y 总收益 89%。**bear 与 sideways 仍未达标**：共识空头侧 alpha 不足 + 震荡市被趋势过滤过度剪枝，属建模缺口而非调参问题，不做人为凑数。
 - [修复] `papersim.py` 权益曲线正确性：按日标记改为 **日线 delta**（原先复用「入场以来累计收益」导致同一段涨幅逐日重复复利，单月虚增 100%+）、每次再平衡同一标的**同一方向只入场一次**（止损/止盈离场后不隔日重开同一信号）、补上 `max_holding_days` 强制离场与 `days_held`；新增对应离线回归测试（标记不累计、单标的单次入场、最大持仓强制）。
 - [改进] 自改进循环 `_adapt` 从「全体 uniform 微调」改为 **per-persona 盈利归因**：按 chunk 方向盈亏给同意方向、反对方向的 specialist 分别增减权重（credit 归一化后按 6% 步长 clamped 到 [0.2, 3.0]），循环在真实数据上逐代产生差异化信号。
 - [新功能] Prof Thorne 市场状态**方向门槛**（`--regime-gate` / `JEXI_REGIME_GATE`，默认关）：熊市不放弱多头、牛市不放弱空头、震荡只留强信心持仓，用作回测/循环的可选方向过滤。

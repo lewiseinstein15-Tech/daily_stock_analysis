@@ -54,6 +54,7 @@ FIVE_YEAR_WINDOW = {"start": "2020-01-01", "end": "2025-12-31", "tickers": []}
 LOOKBACK_WINDOW_DAYS = 120     # trading bars of lookback for opinion slices
 MIN_OPINION_BARS = 40          # too little history -> no opinion that window
 DEFAULT_REBALANCE_DAYS = 20    # cadence of the rolling backtest
+TREND_LOOKBACK_BARS = 100      # SMA window for the per-asset trend floor
 
 
 @dataclass
@@ -112,6 +113,7 @@ class JexiLearningLoop:
         specialist_ids: Optional[List[str]] = None,
         research_backend: Optional[str] = None,
         regime_gate: bool = False,
+        trend_gate: bool = False,
     ):
         self.jexi = jexi
         self.ticker_lists = ticker_lists or {}
@@ -124,6 +126,7 @@ class JexiLearningLoop:
         self.specialist_ids = specialist_ids
         self.research_backend = research_backend
         self.regime_gate = regime_gate
+        self.trend_gate = trend_gate
 
     def _active_personas(self) -> List:
         personas = self.jexi.registry.specialists()
@@ -284,6 +287,9 @@ class JexiLearningLoop:
                         assessment = self.jexi.regime_classifier.classify(regime)
                         plans = self._gate_plans(plans, assessment.regime)
 
+            if self.trend_gate:
+                plans = self._trend_gate_plans(plans, frames, chunk_start)
+
             chunk_frames = {}
             for code, frame in frames.items():
                 rows = frame[frame["date"] <= chunk_end]
@@ -387,6 +393,34 @@ class JexiLearningLoop:
                 signal = "flat"
             elif regime == REGIME_SIDEWAYS and signal in ("long", "short") and plan.confidence < 0.5:
                 signal = "flat"
+            gated.append(replace(plan, signal=signal, target_direction=(
+                "up" if signal == "long" else ("down" if signal == "short" else None)
+            )))
+        return gated
+
+    def _trend_gate_plans(self, plans: List[SignalPlan], frames, chunk_start: str) -> List[SignalPlan]:
+        """Per-asset trend floor (industry-standard john cut): only risk fresh
+        longs when the ticker sits above its longer SMA, fresh shorts below it.
+
+        Vetoes the bear-market buy-the-dip long bias that dragged win rates to
+        ~30% in 2022 without flattening every position like the regime gate.
+        """
+        gated = []
+        for plan in plans:
+            signal = plan.signal
+            if signal in ("long", "short"):
+                frame = frames.get(plan.code)
+                if frame is not None and not frame.empty and "close" in frame.columns:
+                    look = frame[frame["date"] < chunk_start]
+                    closes = look["close"].dropna().tolist()
+                    recent = closes[-min(TREND_LOOKBACK_BARS, len(closes)):] if closes else []
+                    if len(recent) >= TREND_LOOKBACK_BARS:
+                        sma = sum(recent) / len(recent)
+                        last = recent[-1]
+                        if signal == "long" and last < sma:
+                            signal = "flat"
+                        elif signal == "short" and last > sma:
+                            signal = "flat"
             gated.append(replace(plan, signal=signal, target_direction=(
                 "up" if signal == "long" else ("down" if signal == "short" else None)
             )))

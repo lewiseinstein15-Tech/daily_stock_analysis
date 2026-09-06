@@ -1097,6 +1097,7 @@ class Config:
     jexi_specialists: Optional[str] = None              # 逗号分隔的 specialist id 子集
     jexi_research_backend: str = 'off'                  # off|auto|opencode_cli|litellm；LLM 研究模式
     jexi_regime_gate: bool = False                      # Prof Thorne 市场状态方向门槛（回测增强，默认关）
+    jexi_trend_gate: bool = False                       # 标的自身趋势门槛（长>SMA100 / 空<SMA100，默认关）
     jexi_mcp_enabled: bool = False
     jexi_mcp_servers: Optional[str] = None              # JSON 数组：[{name,command,args,env}]
     jexi_report_interval_hours: int = 1
@@ -2083,6 +2084,7 @@ class Config:
             jexi_specialists=os.getenv('JEXI_SPECIALISTS'),
             jexi_research_backend=(os.getenv('JEXI_RESEARCH_BACKEND') or 'off').strip().lower(),
             jexi_regime_gate=os.getenv('JEXI_REGIME_GATE', '').strip().lower() in ('1', 'true', 'yes', 'on'),
+            jexi_trend_gate=os.getenv('JEXI_TREND_GATE', '').strip().lower() in ('1', 'true', 'yes', 'on'),
             jexi_mcp_enabled=os.getenv('JEXI_MCP_ENABLED', 'false').lower() == 'true',
             jexi_mcp_servers=os.getenv('JEXI_MCP_SERVERS'),
             jexi_report_interval_hours=int(os.getenv('JEXI_REPORT_INTERVAL_HOURS', '1')),

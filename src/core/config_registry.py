@@ -2695,6 +2695,20 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "validation": {},
         "display_order": 45,
     },
+    "JEXI_TREND_GATE": {
+        "title": "Jexi Trend Gate",
+        "description": "Per-asset trend floor for backtests: only fresh longs above / fresh shorts below the ticker's longer SMA. Off by default; pairs with JEXI_REGIME_GATE.",
+        "category": "agent",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "false",
+        "options": [],
+        "validation": {},
+        "display_order": 46,
+    },
     "JEXI_MCP_ENABLED": {
         "title": "Jexi MCP Connectors",
         "description": "Enable optional free MCP market-data servers (JEXI_MCP_SERVERS). Off by default.",
@@ -5317,6 +5331,12 @@ _FIELD_HELP_METADATA: Dict[str, Dict[str, Any]] = {
     "JEXI_REGIME_GATE": {
         "help_key": "settings.jexi",
         "examples": ["JEXI_REGIME_GATE=true"],
+        "docs": _DOC_JEXI,
+        "warning_codes": [],
+    },
+    "JEXI_TREND_GATE": {
+        "help_key": "settings.jexi",
+        "examples": ["JEXI_TREND_GATE=true"],
         "docs": _DOC_JEXI,
         "warning_codes": [],
     },

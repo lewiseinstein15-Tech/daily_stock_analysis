@@ -511,3 +511,35 @@ class TestRollingBacktest:
         assert agent.adaptive_weights["mac"] < before_mac
         assert agent.adaptive_weights["za"] == before_za
         assert log and isinstance(log, list)
+
+    def test_trend_gate_vetoes_against_trend(self):
+        from src.jexi.papersim import SignalPlan
+
+        # UP is below its own SMA at the end of an extended decline.
+        falling = [100.0 * (0.995 ** i) for i in range(120)]
+        agent = JexiBossAgent(
+            config=StubConfig(),
+            notifier=JexiNotifier(None),
+            fetcher=FakeFetcher({"UP": make_frame(falling, code="UP")}),
+        )
+        loop = JexiLearningLoop(
+            agent, ticker_lists={"bear": ["UP"]}, max_iterations=1,
+            trend_gate=True, rebalance_days=10, lookback_days=120,
+            specialist_ids=["vix"],
+        )
+        plan = SignalPlan(code="UP", signal="long")
+        frames = loop._load_scenario_frames("2020-11-01", "2021-12-31", ["UP"])
+        gated = loop._trend_gate_plans([plan], frames, "2020-11-02")
+        assert gated[0].signal == "flat"
+        # a rising tape keeps a long and vetoes a short
+        rising = [100.0 * (1.005 ** i) for i in range(120)]
+        agent2 = JexiBossAgent(
+            config=StubConfig(), notifier=JexiNotifier(None),
+            fetcher=FakeFetcher({"UP": make_frame(rising, code="UP")}),
+        )
+        loop2 = JexiLearningLoop(agent2, ticker_lists={"bull": ["UP"]}, trend_gate=True)
+        frames2 = loop2._load_scenario_frames("2020-11-01", "2021-12-31", ["UP"])
+        go_long = loop2._trend_gate_plans([SignalPlan(code="UP", signal="long")], frames2, "2020-11-02")
+        go_short = loop2._trend_gate_plans([SignalPlan(code="UP", signal="short")], frames2, "2020-11-02")
+        assert go_long[0].signal == "long"
+        assert go_short[0].signal == "flat"

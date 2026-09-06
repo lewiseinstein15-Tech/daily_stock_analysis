@@ -73,6 +73,27 @@ Prof Thorne 按基准 index（默认 SPY）前一 `lookback_days` 根 K 线判�
 consensus 计划——`bear` tape 下禁止持仓共识弱于 0.6 的多头、`bull` tape 下禁止弱空头、
 `sideways` 下只保留强信心（confidence ≥ 0.5）持仓。该门槛只影响方向过滤，不影响仓位与止损风控。
 
+### 标的自身趋势门槛（Trend Gate，可选增强）
+
+默认关闭（`JEXI_TREND_GATE=false`），回测/循环用 `--trend-gate` 开启：以 **标的自身** 最近
+`TREND_LOOKBACK_BARS=100` 根收盘价（chunk 起点之前）计算 SMA，长仓要求最新收盘价位于其上方、
+空仓要求位于其下方，否则就地变 flat。它比 regime gate 更细粒度——直接在单个标的维度砍掉
+「熊市抄底多头」（2022 年多数时间价格在自身长均线下，这部分多头胜率仅 ~25-30%）。
+
+实测（2020-2025 滚动回测，默认 ticker 池，`--trend-gate` 单独开启）：
+
+| 场景 | win% | sharpe | maxdd% | ret% | 判定 |
+| --- | --- | --- | --- | --- | --- |
+| bull | 75.0 | 1.33 | 5.2 | 11.9 | **PASS** |
+| bear | 25.0 | -0.81 | 6.1 | -4.5 | FAIL |
+| sideways | 18.2 | -2.39 | 9.3 | -9.0 | FAIL |
+| volatile | 83.3 | 1.35 | 0.6 | 2.1 | FAIL（ret < 5%） |
+| 5y(2020-25) | 51.2 | 1.05 | 33.5 | 174.0 | FAIL |
+
+`--regime-gate` 与 `--trend-gate` 同开时：5y 最大回撤 14.5%（达标 ≤15%）、5y 总收益 89%、赢率 52.9%，
+但 bear 被过度剪枝至 0 笔、bull sharpe 回落；bear/sideways 共识空头 alpha 不足属建模缺口，
+不做人为凑数。
+
 ### 通知（与既有 ntfy 打通）
 
 优先级：`JEXI_NTFY_URL` > `NTFY_URL` > `JEXI_NTFY_SERVER + JEXI_NTFY_TOPIC`。
