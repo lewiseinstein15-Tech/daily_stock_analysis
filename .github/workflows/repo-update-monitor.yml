@@ -4,52 +4,124 @@ on:
   schedule:
     # Check for updates every day at 8:00 AM UTC
     - cron: '0 8 * * *'
-  
+
   # Allow manual trigger
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   check-updates:
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 10
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      
+
       - name: Check for upstream updates
         id: check
         run: |
-          git remote add upstream https://github.com/ZhuLinsen/daily_stock_analysis.git
-          git fetch upstream
-          
-          # Get commit counts
-          LOCAL_COMMITS=$(git rev-list --count HEAD)
-          UPSTREAM_COMMITS=$(git rev-list --count upstream/main)
-          BEHIND=$((UPSTREAM_COMMITS - LOCAL_COMMITS))
-          
-          if [ $BEHIND -gt 0 ]; then
-            echo "behind=true" >> $GITHUB_OUTPUT
-            echo "commits_behind=$BEHIND" >> $GITHUB_OUTPUT
-            
-            # Get latest commit message
-            LATEST_MSG=$(git log upstream/main -1 --pretty=format:"%s" | head -c 100)
-            echo "latest_message=$LATEST_MSG" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          UPSTREAM_URL="https://github.com/ZhuLinsen/daily_stock_analysis.git"
+          git remote add upstream "$UPSTREAM_URL" || git remote set-url upstream "$UPSTREAM_URL"
+          git fetch upstream main
+
+          # Correct commits-behind math for diverged histories: count commits
+          # reachable from upstream/main but not from HEAD (range count).
+          # The old formula (total_upstream - total_local) is wrong whenever
+          # the fork has its own commits or merge commits.
+          BEHIND=$(git rev-list --count HEAD..upstream/main)
+          AHEAD=$(git rev-list --count upstream/main..HEAD)
+          echo "behind_count=$BEHIND" >> "$GITHUB_OUTPUT"
+          echo "ahead_count=$AHEAD" >> "$GITHUB_OUTPUT"
+
+          if [ "$BEHIND" -gt 0 ]; then
+            echo "behind=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "latest_message<<UPSTREAM_EOF"
+              git log upstream/main -1 --pretty=format:"%s" | tr -d '\r' | head -c 200
+              echo ""
+              echo "UPSTREAM_EOF"
+            } >> "$GITHUB_OUTPUT"
+            {
+              echo "recent_commits<<UPSTREAM_EOF"
+              git log --oneline HEAD..upstream/main | head -n 10
+              echo "UPSTREAM_EOF"
+            } >> "$GITHUB_OUTPUT"
           else
-            echo "behind=false" >> $GITHUB_OUTPUT
+            echo "behind=false" >> "$GITHUB_OUTPUT"
           fi
-      
-      - name: Send notification if updates available
-        if: steps.check.outputs.behind == 'true'
+
+          echo "Fork status vs upstream — behind: $BEHIND, ahead: $AHEAD"
+
+      - name: Send notification (ntfy JSON publish API)
+        if: always()
+        env:
+          NTFY_URL: ${{ secrets.NTFY_URL }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          BEHIND_FLAG: ${{ steps.check.outputs.behind }}
+          BEHIND_COUNT: ${{ steps.check.outputs.behind_count }}
+          AHEAD_COUNT: ${{ steps.check.outputs.ahead_count }}
+          LATEST_MSG: ${{ steps.check.outputs.latest_message }}
+          RECENT_COMMITS: ${{ steps.check.outputs.recent_commits }}
+          SYNC_URL: https://github.com/${{ github.repository }}/actions/workflows/auto-sync.yml
         run: |
-          curl -d "title=🔄 Repo Update Available&message=Your fork is ${{ steps.check.outputs.commits_behind }} commits behind\n\nLatest update: ${{ steps.check.outputs.latest_message }}\n\nClick to sync: https://github.com/${{ github.repository }}/actions" ${{ secrets.NTFY_URL }}
-          
-          echo "Updates available!"
-          echo "Commits behind: ${{ steps.check.outputs.commits_behind }}"
-          echo "Latest: ${{ steps.check.outputs.latest_message }}"
-      
-      - name: Send all-clear notification
-        if: steps.check.outputs.behind == 'false'
-        run: |
-          curl -d "title=✅ Repo Up to Date&message=Your fork is synchronized with upstream" ${{ secrets.NTFY_URL }}
+          set -euo pipefail
+          if [ -z "${NTFY_URL:-}" ]; then
+            echo "NTFY_URL secret not set — skipping notification."
+            exit 0
+          fi
+          # NTFY_URL must include the topic path, e.g. https://ntfy.sh/my-topic
+          TOPIC="${NTFY_URL##*/}"
+          SERVER="${NTFY_URL%/*}"
+          if [ -z "$TOPIC" ] || [ "$SERVER" = "$NTFY_URL" ]; then
+            echo "::error::NTFY_URL must be a full topic endpoint like https://ntfy.sh/my-topic"
+            exit 1
+          fi
+          AUTH_ARGS=()
+          if [ -n "${NTFY_TOKEN:-}" ]; then AUTH_ARGS=(-H "Authorization: Bearer ${NTFY_TOKEN}"); fi
+          notify() {
+            jq -n \
+              --arg topic "$TOPIC" \
+              --arg title "$1" \
+              --arg message "$2" \
+              --argjson priority "$3" \
+              '{topic: $topic, title: $title, message: $message, priority: $priority}' \
+            | curl --fail -sS -X POST "$SERVER" \
+                -H "Content-Type: application/json" \
+                "${AUTH_ARGS[@]}" \
+                -d @-
+          }
+
+          if [ "${BEHIND_FLAG:-}" = "true" ]; then
+            DIVERGED_NOTE=""
+            if [ "${AHEAD_COUNT:-0}" -gt 0 ]; then
+              DIVERGED_NOTE="Histories diverged: your fork also has ${AHEAD_COUNT} local commit(s) not in upstream. The daily Auto Sync workflow will merge them (a conflict raises an alert)."
+            fi
+            jq -n \
+              --arg topic "$TOPIC" \
+              --arg title "🔄 Repo Update Available" \
+              --argjson priority 3 \
+              --arg head "Your fork is ${BEHIND_COUNT:-?} commit(s) behind upstream ZhuLinsen/daily_stock_analysis." \
+              --arg latest "${LATEST_MSG:-unknown}" \
+              --arg recent "${RECENT_COMMITS:-none}" \
+              --arg diverged "$DIVERGED_NOTE" \
+              --arg sync "$SYNC_URL" \
+              '{topic: $topic, title: $title, priority: $priority, message: ($head + "\n\nLatest upstream commit: " + $latest + "\n\nRecent upstream commits:\n" + $recent + "\n" + $diverged + "\nSync now: " + $sync + " (or use the Sync fork button on GitHub).")}' \
+            | curl --fail -sS -X POST "$SERVER" \
+                -H "Content-Type: application/json" \
+                "${AUTH_ARGS[@]}" \
+                -d @-
+          elif [ "${BEHIND_FLAG:-}" = "false" ]; then
+            notify "✅ Repo Up to Date" \
+              "Your fork is synchronized with upstream ZhuLinsen/daily_stock_analysis (local commits ahead: ${AHEAD_COUNT:-0})." \
+              2
+          else
+            notify "❌ Repo Update Monitor failed" \
+              "The upstream update check did not complete — see the workflow run for details." \
+              5
+          fi

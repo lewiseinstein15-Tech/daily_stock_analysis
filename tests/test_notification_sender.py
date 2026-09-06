@@ -1199,6 +1199,65 @@ class TestNtfySender(unittest.TestCase):
         self.assertFalse(result)
         self.assertNotIn("secret-token", "\n".join(captured.output))
 
+    @mock.patch("src.notification_sender.ntfy_sender.requests.post")
+    def test_long_message_falls_back_to_summary_plus_attachment(self, mock_post):
+        mock_post.side_effect = [_response(200), _response(200)]
+        cfg = _config(ntfy_url="https://ntfy.sh/dsa-topic", ntfy_token="secret-token")
+        sender = NtfySender(cfg)
+        long_content = "line of report text\n" * 400  # ~8000 bytes > 4000-byte cap
+
+        result = sender.send_to_ntfy(long_content, title="📈 Daily Report 报告")
+
+        self.assertTrue(result)
+        self.assertEqual(mock_post.call_count, 2)
+
+        summary_call, attachment_call = mock_post.call_args_list
+        # 1) truncated summary via the regular JSON publish API
+        self.assertEqual(summary_call.args[0], "https://ntfy.sh")
+        summary_message = summary_call.kwargs["json"]["message"]
+        self.assertLessEqual(len(summary_message.encode("utf-8")), 4096)
+        self.assertTrue(summary_message.startswith("line of report text"))
+        self.assertIn("附件", summary_message)
+        # 2) full report as raw-body attachment to /<topic> with Filename header
+        self.assertEqual(attachment_call.args[0], "https://ntfy.sh/dsa-topic")
+        self.assertEqual(attachment_call.kwargs["data"], long_content.strip().encode("utf-8"))
+        self.assertIsNone(attachment_call.kwargs.get("json"))
+        headers = attachment_call.kwargs["headers"]
+        self.assertTrue(headers["Filename"].startswith("report-"))
+        self.assertTrue(headers["Filename"].endswith(".md"))
+        self.assertEqual(headers["Authorization"], "Bearer secret-token")
+        # Regression: header values must survive latin-1 encoding even when the
+        # title contains emoji/CJK (http.client rejects anything else).
+        for name, value in headers.items():
+            try:
+                value.encode("latin-1")
+            except UnicodeEncodeError:
+                self.fail(f"attachment header {name!r} is not latin-1 safe: {value!r}")
+
+    @mock.patch("src.notification_sender.ntfy_sender.requests.post")
+    def test_http_413_response_retries_with_attachment(self, mock_post):
+        mock_post.side_effect = [_response(413), _response(200), _response(200)]
+        cfg = _config(ntfy_url="https://ntfy.sh/dsa-topic")
+        sender = NtfySender(cfg)
+
+        result = sender.send_to_ntfy("x" * 100, title="t")
+
+        self.assertTrue(result)
+        self.assertEqual(mock_post.call_count, 3)  # normal → 413 → summary + attachment
+        self.assertEqual(mock_post.call_args_list[2].args[0], "https://ntfy.sh/dsa-topic")
+
+    @mock.patch("src.notification_sender.ntfy_sender.requests.post")
+    def test_attachment_failure_returns_false(self, mock_post):
+        mock_post.side_effect = [_response(200), _response(500)]  # summary ok, attachment fails
+        cfg = _config(ntfy_url="https://ntfy.sh/dsa-topic")
+        sender = NtfySender(cfg)
+        long_content = "report line\n" * 500
+
+        result = sender.send_to_ntfy(long_content)
+
+        self.assertFalse(result)
+        self.assertEqual(mock_post.call_count, 2)
+
 
 class TestGotifySender(unittest.TestCase):
     """Unit tests for GotifySender."""
