@@ -20,6 +20,19 @@
 
 简体中文 | [English](docs/README_EN.md) | [繁體中文](docs/README_CHT.md)
 
+> 🚀 **NEW — JEXI Market**: This fork now includes an autonomous
+> multi-agent market intelligence & paper-trading system. See
+> [`jexi_market/README.md`](jexi_market/README.md) for the full
+> English documentation, architecture, agent hierarchy, risk
+> management, Alpaca paper trading, backtesting, and 98 passing tests.
+>
+> Quick start:
+> ```bash
+> python -m jexi_market.cli status
+> python -m jexi_market.cli once --symbols AAPL
+> python -m jexi_market.cli run --max-candidates 3
+> ```
+
 </div>
 
 ## 💖 赞助商 (Sponsors)
