@@ -130,8 +130,15 @@ class RiskGate:
         self,
         decision: Decision,
         portfolio: PortfolioState,
+        *,
+        sector: Optional[str] = None,
     ) -> GateResult:
-        """Evaluate a decision against the risk envelope."""
+        """Evaluate a decision against the risk envelope.
+
+        ``sector`` is the real sector classification for the decision's
+        symbol (from :class:`SectorClassifier`).  When omitted, the
+        decision's symbol is used as a fallback sector key.
+        """
         violations: List[RiskViolation] = []
 
         # 0. Halt check — if we're in protective state, reject everything.
@@ -235,16 +242,16 @@ class RiskGate:
             ))
             self.halt("drawdown halt threshold breached")
 
-        # 8. Sector concentration (simplified — uses decision.symbol as the
-        # sector key when no real sector classification is supplied)
-        sector = decision.symbol  # placeholder; real impl maps symbol -> sector
-        new_sector = portfolio.sector_exposure.get(sector, 0.0) + decision.position_fraction
+        # 8. Sector concentration — uses the real sector if supplied,
+        #    otherwise falls back to the symbol as a sector key.
+        sector_key = sector or decision.symbol
+        new_sector = portfolio.sector_exposure.get(sector_key, 0.0) + decision.position_fraction
         if new_sector > self.envelope.max_sector_concentration:
             violations.append(RiskViolation(
                 rule="max_sector_concentration",
                 severity=Severity.WARNING,
                 detail=(
-                    f"sector '{sector}' exposure {new_sector:.2%} exceeds limit "
+                    f"sector '{sector_key}' exposure {new_sector:.2%} exceeds limit "
                     f"{self.envelope.max_sector_concentration:.2%}"
                 ),
                 proposed_value=new_sector,

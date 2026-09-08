@@ -185,6 +185,153 @@ def cmd_alpaca(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_walk_forward(args: argparse.Namespace) -> int:
+    from jexi_market.backtest import run_walk_forward
+    from jexi_market.data import MarketDataClient
+    from jexi_market.strategies import get_strategy, list_strategies
+
+    config = get_config()
+    strategy = get_strategy(args.strategy)
+    if not strategy:
+        print(f"unknown strategy. available: {', '.join(list_strategies())}", file=sys.stderr)
+        return 2
+    client = MarketDataClient()
+    snap = client.get_daily(args.symbol, days=args.days)
+    if not snap.ok:
+        print(f"data fetch failed: {snap.error}", file=sys.stderr)
+        return 1
+    wf = run_walk_forward(snap.df, strategy, symbol=args.symbol, n_windows=args.windows)
+    if args.json:
+        print(json.dumps(wf.to_dict(), indent=2, default=str))
+    else:
+        print(f"Walk-forward: {wf.strategy_name} on {wf.symbol}")
+        print(f"  windows: {wf.n_windows}")
+        print(f"  total trades: {wf.total_trades}")
+        print(f"  avg sharpe:     {wf.avg_sharpe:.2f}")
+        print(f"  avg return:    {wf.avg_total_return:.2%}")
+        print(f"  avg max DD:     {wf.avg_max_drawdown:.2%}")
+        print(f"  avg win rate:  {wf.avg_win_rate:.1%}")
+    return 0
+
+
+def cmd_compare_strategies(args: argparse.Namespace) -> int:
+    from jexi_market.backtest import compare_strategies
+    from jexi_market.data import MarketDataClient
+
+    config = get_config()
+    client = MarketDataClient()
+    snap = client.get_daily(args.symbol, days=args.days)
+    if not snap.ok:
+        print(f"data fetch failed: {snap.error}", file=sys.stderr)
+        return 1
+    rows = compare_strategies(snap.df, symbol=args.symbol)
+    print(f"{'strategy':<22}{'trades':>7}{'win%':>7}{'return':>9}{'sharpe':>8}{'sortino':>9}{'maxDD':>8}{'alpha':>9}")
+    for r in rows:
+        print(
+            f"{r['strategy']:<22}{r['n_trades']:>7}"
+            f"{r['win_rate']*100:>6.1f}%"
+            f"{r['total_return']*100:>8.1f}%"
+            f"{r['sharpe']:>8.2f}"
+            f"{r['sortino']:>9.2f}"
+            f"{r['max_drawdown']*100:>7.1f}%"
+            f"{r['alpha']*100:>8.1f}%"
+        )
+    return 0
+
+
+def cmd_self_eval(args: argparse.Namespace) -> int:
+    from jexi_market.self_eval import SelfEvaluationLoop
+
+    config = get_config()
+    loop = SelfEvaluationLoop(config)
+    if args.leaderboard:
+        board = loop.agent_leaderboard()
+        if not board:
+            print("no agent history yet (need closed trades)")
+            return 0
+        print(f"{'agent':<22}{'accuracy':>10}{'calls':>7}{'correct':>9}{'wrong':>7}{'weight':>8}{'total_pnl':>11}")
+        for r in board:
+            print(
+                f"{r['agent_id']:<22}{r['accuracy']*100:>9.1f}%"
+                f"{r['n_calls']:>7}{r['n_correct']:>9}{r['n_wrong']:>7}"
+                f"{r['adaptive_weight']:>8.2f}{r['total_pnl']:>11.4f}"
+            )
+        return 0
+    closed = loop.evaluate_open_trades(max_to_close=args.max)
+    print(f"closed {len(closed)} open trades")
+    for c in closed[:10]:
+        print(f"  {c.symbol:<8} {c.direction:<6} entry={c.entry_price:.2f} exit={c.exit_price:.2f} "
+              f"pnl={c.pnl_pct:+.2%} reason={c.exit_reason}")
+    if closed:
+        stats = loop.memory.stats_summary()
+        print(f"\nmemory stats: {stats}")
+    return 0
+
+
+def cmd_scheduler(args: argparse.Namespace) -> int:
+    from jexi_market.scheduler import AutonomousScheduler
+
+    config = get_config()
+    sched = AutonomousScheduler(config)
+    if args.once:
+        result = sched.run_once(args.once)
+        print(json.dumps(result.to_dict(), indent=2, default=str))
+        return 0 if result.success else 1
+    # Otherwise run forever (Ctrl-C to stop)
+    sched.run_forever(
+        scan_interval_seconds=args.scan_interval,
+        analyze_interval_seconds=args.analyze_interval,
+        monitor_interval_seconds=args.monitor_interval,
+    )
+    return 0
+
+
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    import uvicorn
+    from jexi_market.dashboard import app
+
+    print(f"JEXI Market Dashboard starting on http://{args.host}:{args.port}")
+    print("  GET /                  — health")
+    print("  GET /api/overview      — portfolio + system state")
+    print("  GET /api/agents        — agent roster + performance")
+    print("  GET /api/strategies    — strategy registry")
+    print("  GET /api/recent-trades — last N paper trades")
+    print("  POST /api/analyze/{symbol} — trigger analysis")
+    print("  POST /api/scan         — trigger scan")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    return 0
+
+
+def cmd_correlation(args: argparse.Namespace) -> int:
+    from jexi_market.backtest import compute_correlation_matrix, find_correlated_clusters
+    from jexi_market.data import MarketDataClient
+
+    config = get_config()
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    client = MarketDataClient()
+    frames = {}
+    for s in symbols:
+        snap = client.get_daily(s, days=args.days)
+        if snap.ok:
+            frames[s] = snap.df
+    matrix = compute_correlation_matrix(frames)
+    print("Correlation matrix:")
+    header = "          " + "  ".join(f"{s[:8]:>8}" for s in matrix)
+    print(header)
+    for s1 in matrix:
+        row = f"{s1[:8]:<10}" + "  ".join(f"{matrix[s1].get(s2, 0):>8.2f}" for s2 in matrix)
+        print(row)
+    print()
+    clusters = find_correlated_clusters(frames, threshold=args.threshold)
+    if clusters:
+        print(f"Correlated clusters (>= {args.threshold}):")
+        for i, cluster in enumerate(clusters, 1):
+            print(f"  cluster {i}: {', '.join(cluster)}")
+    else:
+        print(f"No correlated clusters (>= {args.threshold})")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jexi-market",
@@ -233,6 +380,42 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_alp = sub.add_parser("alpaca", help="Show Alpaca account / positions / market clock")
     p_alp.set_defaults(func=cmd_alpaca)
+
+    p_wf = sub.add_parser("walk-forward", help="Walk-forward backtest (out-of-sample validation)")
+    p_wf.add_argument("--strategy", required=True)
+    p_wf.add_argument("--symbol", required=True)
+    p_wf.add_argument("--days", type=int, default=500)
+    p_wf.add_argument("--windows", type=int, default=5)
+    p_wf.add_argument("--json", action="store_true")
+    p_wf.set_defaults(func=cmd_walk_forward)
+
+    p_cmp = sub.add_parser("compare-strategies", help="Compare all strategies on one symbol")
+    p_cmp.add_argument("--symbol", required=True)
+    p_cmp.add_argument("--days", type=int, default=250)
+    p_cmp.set_defaults(func=cmd_compare_strategies)
+
+    p_eval = sub.add_parser("self-eval", help="Close open paper trades + update agent weights")
+    p_eval.add_argument("--max", type=int, default=50, help="Max trades to evaluate")
+    p_eval.add_argument("--leaderboard", action="store_true", help="Show agent leaderboard")
+    p_eval.set_defaults(func=cmd_self_eval)
+
+    p_sched = sub.add_parser("scheduler", help="Run the autonomous scheduler (foreground)")
+    p_sched.add_argument("--once", default="", help="Run a single job (scan/analyze/monitor/daily_summary) and exit")
+    p_sched.add_argument("--scan-interval", type=int, default=300)
+    p_sched.add_argument("--analyze-interval", type=int, default=600)
+    p_sched.add_argument("--monitor-interval", type=int, default=180)
+    p_sched.set_defaults(func=cmd_scheduler)
+
+    p_dash = sub.add_parser("dashboard", help="Start the FastAPI dashboard (uvicorn)")
+    p_dash.add_argument("--host", default="0.0.0.0")
+    p_dash.add_argument("--port", type=int, default=8088)
+    p_dash.set_defaults(func=cmd_dashboard)
+
+    p_corr = sub.add_parser("correlation", help="Compute correlation matrix across symbols")
+    p_corr.add_argument("--symbols", required=True, help="Comma-separated")
+    p_corr.add_argument("--days", type=int, default=120)
+    p_corr.add_argument("--threshold", type=float, default=0.7)
+    p_corr.set_defaults(func=cmd_correlation)
     return parser
 
 

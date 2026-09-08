@@ -5,7 +5,7 @@
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Tests](https://img.shields.io/badge/tests-98%20passing-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-147%20passing-brightgreen.svg)](#testing)
 
 JEXI Market is an autonomous, multi-agent market-analysis and paper-trading
 system built on top of the `daily_stock_analysis` repository. It is designed
@@ -857,30 +857,133 @@ tests/jexi_market/
 **Genuine limitations** (not "known issues" — these are by design or
 depend on unavailable external services):
 
-1. **Fundamental data is NOT fabricated.** When no fundamental adapter
-   is wired (the default — the repo's free data sources don't ship
-   P/E for every ticker), `FundamentalAgent` returns `None` (no
-   opinion). To enable fundamental analysis, populate
-   `ctx.research_cache["fundamentals:<symbol>"]` from a paid
-   fundamental feed (Longbridge, AlphaVantage, etc.).
-
-2. **News sentiment is NOT fabricated.** Same pattern — `NewsAgent`
-   returns `None` without a real news feed. Wire the repo's
-   `IntelligenceService` (Anspire / SerpAPI / Tavily / Brave / Bocha)
-   to enable it.
-
-3. **Sector classification is a placeholder.** The risk gate uses the
-   symbol itself as the sector key. A real sector classifier (GICS,
-   ICB) is on the roadmap.
-
-4. **Live trading is gated twice.** Even with `JEXI_LIVE_TRADING_ENABLED=1`,
+1. **Live trading is gated twice.** Even with `JEXI_LIVE_TRADING_ENABLED=1`,
    the system requires 30 paper-validation days recorded in the
-   performance memory before any live order is allowed.
+   performance memory before any live order is allowed. This is by
+   design (spec section 12).
 
-5. **The system does NOT promise profits.** It produces evidence-based
+2. **The system does NOT promise profits.** It produces evidence-based
    decisions with explicit confidence and risk attribution. The
    objective is better research + better evidence + better risk
    management, not guaranteed returns.
+
+3. **Sentiment classifier is keyword-based.** The free news sentiment
+   classifier uses a curated keyword list (no LLM, no API key). It's
+   deterministic and works for free, but for higher quality swap in
+   Anspire / SerpAPI / a fine-tuned model. The adapter interface is
+   the same.
+
+4. **Correlation is computed on daily returns.** Intraday correlation
+   (which matters for HFT) is not supported — by design, JEXI Market
+   is paper-trading-oriented, not HFT.
+
+5. **Sector concentration uses yfinance's sector field.** When
+   yfinance doesn't return a sector (rare), the symbol itself is
+   used as the sector key. A real GICS / ICB classifier could be
+   added later.
+
+6. **The dashboard is read-only.** It consumes the orchestrator's
+   output; it does NOT place orders itself. All order placement goes
+   through the CLI / pipeline / scheduler, which enforces the risk
+   gate. This is by design.
+
+---
+
+## 27. What's New in v0.2 (this build)
+
+The second build closes every "genuine limitation" flagged in v0.1
+and adds the autonomous operation, self-evaluation, and walk-forward
+validation the spec demanded.
+
+### Free fundamental data (real, not fabricated)
+
+`FundamentalAgent` now consumes real yfinance fundamentals — P/E,
+forward P/E, price-to-book, profit/gross/operating margins, return on
+equity, revenue/earnings growth, debt-to-equity, current ratio, market
+cap. When yfinance is unavailable or returns nothing, the agent
+returns `None` (no opinion) — never fabricates. See
+`jexi_market/enrichment.py`.
+
+### Free news + sentiment (real, not invented)
+
+`NewsAgent` now consumes real yfinance news (titles + publishers) and
+classifies sentiment via a curated keyword classifier (positive / negative
+/ neutral, deterministic, no LLM required). When no news is available,
+the agent returns `None`. See `jexi_market/enrichment.py`.
+
+### Real sector classification
+
+The risk gate's sector-concentration check now uses yfinance's sector
+field (Technology, Energy, Financials, etc.) — no more symbol-as-sector
+placeholder. See `SectorClassifier` in `jexi_market/enrichment.py`.
+
+### Walk-forward backtesting
+
+`run_walk_forward()` splits data into N windows, runs the strategy
+in-sample on the first 70% and evaluates out-of-sample on the
+remaining 30%. The reported metrics are the average across all
+out-of-sample windows — a much harder test than a single in-sample
+backtest, and the standard way to detect overfit strategies. See
+`jexi_market/backtest/engine.py`.
+
+### Strategy comparison
+
+`compare_strategies()` runs every registered strategy on the same
+data and returns a sorted comparison table (Sharpe, Sortino, max-DD,
+win rate, profit factor, alpha). The system does NOT assume one
+strategy is universally best. See `jexi_market/backtest/engine.py`.
+
+### Correlation + cluster detection
+
+`compute_correlation_matrix()` and `find_correlated_clusters()` group
+symbols whose pairwise return correlation ≥ 0.7. The risk gate uses
+this to enforce `max_correlated_exposure` (spec section 13).
+
+### 3 more strategies (8 total)
+
+Added `event_driven` (volume + RSI extremes), `statistical_arb`
+(Bollinger z-score mean-reversion), and `volatility_breakout`
+(ATR expansion + momentum + volume).
+
+### Autonomous scheduler
+
+`AutonomousScheduler` runs the full pipeline on a schedule with no
+human interaction: scan every 5 min, analyze every 10 min, monitor
+every 3 min, daily summary at 22:00 UTC. Defaults are conservative —
+paper trading doesn't need HFT cadence. See
+`jexi_market/scheduler.py`. CLI: `python -m jexi_market.cli scheduler`.
+
+### Self-evaluation loop
+
+`SelfEvaluationLoop` closes open paper trades (stop / take-profit /
+max-holding), records the outcome with full agent attribution, and
+updates adaptive weights in the performance memory. The orchestrator
+then weights future consensus by historical accuracy (clamped to
+[0.5, 1.5] so no agent dominates or is silenced). See
+`jexi_market/self_eval.py`. CLI: `python -m jexi_market.cli self-eval`.
+
+### FastAPI dashboard
+
+A read-only HTTP dashboard exposes real system state — no fabricated
+numbers. Endpoints: `/api/overview`, `/api/agents`, `/api/strategies`,
+`/api/recent-trades`, `/api/agent-stats`, `/api/scan-candidates`, plus
+POST triggers `/api/analyze/{symbol}` and `/api/scan`. See
+`jexi_market/dashboard.py`. CLI: `python -m jexi_market.cli dashboard`.
+
+### Improved confidence system
+
+The `Confidence` formula now incorporates real agent disagreement —
+when the Risk Agent or Prof. Aldric raises concerns, the
+`disagreement_penalty` flows through to the final confidence score,
+which scales Vic's position sizing down. See
+`jexi_market/contracts.py:Confidence` and
+`jexi_market/agents/leadership.py:ProfAldricAgent`.
+
+### Test coverage
+
+147 tests (was 98), covering every new component: enrichment adapters
+(12 tests), scheduler (7), self-eval (9), dashboard (8), walk-forward +
+correlation + compare (13), plus all existing tests still pass.
 
 ---
 

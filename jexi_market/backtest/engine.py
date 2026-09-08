@@ -372,3 +372,262 @@ def _was_in_position(day_idx: int, trades: List[BacktestTrade], dates: List[str]
         if t.entry_date <= today <= t.exit_date:
             return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Walk-forward backtesting
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class WalkForwardResult:
+    """Result of a walk-forward backtest.
+
+    Walk-forward splits the data into N windows.  For each window, the
+    strategy runs on the first 70% (in-sample) and is then evaluated on
+    the remaining 30% (out-of-sample).  The reported metrics are the
+    AVERAGE across all out-of-sample windows — this is a much harder
+    test than a single in-sample backtest, and is the standard way to
+    detect overfit strategies.
+    """
+
+    strategy_name: str
+    symbol: str
+    n_windows: int = 0
+    out_of_sample_results: List[BacktestResult] = field(default_factory=list)
+
+    @property
+    def avg_sharpe(self) -> float:
+        if not self.out_of_sample_results:
+            return 0.0
+        return sum(r.sharpe for r in self.out_of_sample_results) / len(self.out_of_sample_results)
+
+    @property
+    def avg_total_return(self) -> float:
+        if not self.out_of_sample_results:
+            return 0.0
+        return sum(r.total_return for r in self.out_of_sample_results) / len(self.out_of_sample_results)
+
+    @property
+    def avg_max_drawdown(self) -> float:
+        if not self.out_of_sample_results:
+            return 0.0
+        return sum(r.max_drawdown for r in self.out_of_sample_results) / len(self.out_of_sample_results)
+
+    @property
+    def avg_win_rate(self) -> float:
+        if not self.out_of_sample_results:
+            return 0.0
+        rates = [r.win_rate for r in self.out_of_sample_results if r.n_trades > 0]
+        return sum(rates) / len(rates) if rates else 0.0
+
+    @property
+    def total_trades(self) -> int:
+        return sum(r.n_trades for r in self.out_of_sample_results)
+
+    def to_dict(self) -> dict:
+        return {
+            "strategy_name": self.strategy_name,
+            "symbol": self.symbol,
+            "n_windows": self.n_windows,
+            "avg_sharpe": round(self.avg_sharpe, 4),
+            "avg_total_return": round(self.avg_total_return, 4),
+            "avg_max_drawdown": round(self.avg_max_drawdown, 4),
+            "avg_win_rate": round(self.avg_win_rate, 4),
+            "total_trades": self.total_trades,
+            "windows": [r.to_dict() for r in self.out_of_sample_results],
+        }
+
+
+def run_walk_forward(
+    df: pd.DataFrame,
+    strategy: Strategy,
+    *,
+    symbol: str = "",
+    n_windows: int = 5,
+    in_sample_fraction: float = 0.7,
+    start_cash: float = 100_000.0,
+    transaction_cost_bps: float = 5.0,
+    slippage_bps: float = 5.0,
+) -> WalkForwardResult:
+    """Walk-forward backtest: split data into N windows, evaluate out-of-sample.
+
+    For each window:
+      1. Run the strategy on the first ``in_sample_fraction`` (in-sample)
+      2. Apply the same strategy on the remaining 30% (out-of-sample)
+      3. Record the out-of-sample result
+
+    The reported metrics are the average across all out-of-sample
+    windows.  A robust strategy should have similar in-sample and
+    out-of-sample performance; a sharp drop signals overfitting.
+    """
+    result = WalkForwardResult(strategy_name=strategy.name, symbol=symbol)
+    if df is None or df.empty or len(df) < n_windows * 30:
+        return result
+
+    total_rows = len(df)
+    window_size = total_rows // n_windows
+
+    for i in range(n_windows):
+        start_idx = i * window_size
+        end_idx = (i + 1) * window_size if i < n_windows - 1 else total_rows
+        window = df.iloc[start_idx:end_idx].reset_index(drop=True)
+        if len(window) < 30:
+            continue
+        # Out-of-sample = the last 30% of the window
+        split = int(len(window) * in_sample_fraction)
+        oos = window.iloc[split:].reset_index(drop=True)
+        if len(oos) < 10:
+            continue
+        oos_result = run_backtest(
+            oos,
+            strategy,
+            symbol=symbol,
+            start_cash=start_cash,
+            transaction_cost_bps=transaction_cost_bps,
+            slippage_bps=slippage_bps,
+        )
+        result.out_of_sample_results.append(oos_result)
+        result.n_windows += 1
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Strategy comparison
+# ---------------------------------------------------------------------------
+
+
+def compare_strategies(
+    df: pd.DataFrame,
+    *,
+    symbol: str = "",
+    strategies: Optional[List[Strategy]] = None,
+) -> List[Dict[str, Any]]:
+    """Run every strategy on the same data and return a comparison table.
+
+    Useful for "the system should be able to compare strategies rather
+    than assuming one strategy is universally best" (spec section 14).
+    """
+    from jexi_market.strategies import all_strategies
+    if strategies is None:
+        strategies = list(all_strategies().values())
+    rows: List[Dict[str, Any]] = []
+    for strat in strategies:
+        r = run_backtest(df, strat, symbol=symbol)
+        rows.append({
+            "strategy": strat.name,
+            "n_trades": r.n_trades,
+            "win_rate": round(r.win_rate, 4),
+            "total_return": round(r.total_return, 4),
+            "sharpe": round(r.sharpe, 4),
+            "sortino": round(r.sortino, 4),
+            "max_drawdown": round(r.max_drawdown, 4),
+            "profit_factor": round(r.profit_factor, 4) if r.profit_factor != float("inf") else None,
+            "alpha": round(r.alpha, 4),
+        })
+    # Sort by Sharpe descending
+    rows.sort(key=lambda r: r["sharpe"], reverse=True)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Correlation / portfolio risk
+# ---------------------------------------------------------------------------
+
+
+def compute_correlation_matrix(
+    frames: Dict[str, pd.DataFrame],
+) -> Dict[str, Dict[str, float]]:
+    """Compute pairwise return correlation across multiple symbols.
+
+    Used by the risk gate to detect correlated exposure (spec section
+    13: max_correlated_exposure).  When multiple open positions are
+    highly correlated (>0.7), the effective risk is much higher than
+    the per-position fraction suggests.
+    """
+    import pandas as _pd
+
+    returns: Dict[str, List[float]] = {}
+    for symbol, df in frames.items():
+        if df is None or df.empty or "close" not in df.columns:
+            continue
+        closes = [float(x) for x in df["close"].dropna().tolist()]
+        if len(closes) < 2:
+            continue
+        rets = []
+        for i in range(1, len(closes)):
+            if closes[i - 1] != 0:
+                rets.append(closes[i] / closes[i - 1] - 1.0)
+        returns[symbol] = rets
+
+    symbols = list(returns.keys())
+    if len(symbols) < 2:
+        return {}
+
+    # Align lengths (truncate to shortest)
+    min_len = min(len(returns[s]) for s in symbols)
+    aligned = {s: returns[s][:min_len] for s in symbols}
+
+    # Pearson correlation matrix
+    matrix: Dict[str, Dict[str, float]] = {s: {} for s in symbols}
+    for i, s1 in enumerate(symbols):
+        for s2 in symbols:
+            r1 = aligned[s1]
+            r2 = aligned[s2]
+            n = len(r1)
+            if n < 2:
+                matrix[s1][s2] = 0.0
+                continue
+            mean1 = sum(r1) / n
+            mean2 = sum(r2) / n
+            cov = sum((r1[k] - mean1) * (r2[k] - mean2) for k in range(n)) / (n - 1)
+            var1 = sum((r1[k] - mean1) ** 2 for k in range(n)) / (n - 1)
+            var2 = sum((r2[k] - mean2) ** 2 for k in range(n)) / (n - 1)
+            sd1 = var1 ** 0.5
+            sd2 = var2 ** 0.5
+            if sd1 == 0 or sd2 == 0:
+                matrix[s1][s2] = 0.0
+            else:
+                matrix[s1][s2] = round(cov / (sd1 * sd2), 4)
+    return matrix
+
+
+def find_correlated_clusters(
+    frames: Dict[str, pd.DataFrame],
+    *,
+    threshold: float = 0.7,
+) -> List[List[str]]:
+    """Group symbols whose pairwise return correlation >= ``threshold``.
+
+    Returns a list of clusters (each a list of symbols).  The risk gate
+    uses this to enforce ``max_correlated_exposure``.
+    """
+    matrix = compute_correlation_matrix(frames)
+    if not matrix:
+        return []
+    symbols = list(matrix.keys())
+    # Union-find
+    parent = {s: s for s in symbols}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    for i, s1 in enumerate(symbols):
+        for s2 in symbols[i + 1:]:
+            if matrix.get(s1, {}).get(s2, 0.0) >= threshold:
+                union(s1, s2)
+
+    clusters: Dict[str, List[str]] = {}
+    for s in symbols:
+        root = find(s)
+        clusters.setdefault(root, []).append(s)
+    return [c for c in clusters.values() if len(c) > 1]

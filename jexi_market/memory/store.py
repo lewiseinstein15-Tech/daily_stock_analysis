@@ -148,20 +148,32 @@ class PerformanceMemory:
         self.db_path = db_path or "data/jexi_market/memory.sqlite"
         self._persistent_conn: Optional[sqlite3.Connection] = None
         if self.db_path == ":memory:":
-            self._persistent_conn = sqlite3.connect(":memory:")
+            # check_same_thread=False lets FastAPI request threads share the
+            # in-memory DB.  We serialise writes with a lock at the call site.
+            import threading
+            self._lock = threading.Lock()
+            self._persistent_conn = sqlite3.connect(":memory:", check_same_thread=False)
             self._persistent_conn.row_factory = sqlite3.Row
             self._persistent_conn.executescript(SCHEMA)
             self._persistent_conn.commit()
         else:
+            self._lock = None
             Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
             self._init_schema()
 
     @contextmanager
     def _conn(self):
         if self._persistent_conn is not None:
-            # In-memory DB — reuse the persistent connection.
-            yield self._persistent_conn
-            self._persistent_conn.commit()
+            # In-memory DB — reuse the persistent connection (thread-safe
+            # via the lock acquired here).
+            if self._lock is not None:
+                self._lock.acquire()
+            try:
+                yield self._persistent_conn
+                self._persistent_conn.commit()
+            finally:
+                if self._lock is not None:
+                    self._lock.release()
         else:
             conn = sqlite3.connect(self.db_path)
             conn.row_factory = sqlite3.Row
@@ -240,10 +252,19 @@ class PerformanceMemory:
                 self._bump_agent(conn, agent_id, correct=False, pnl=pnl_pct)
 
     def _bump_agent(self, conn, agent_id: str, *, correct: bool, pnl: float) -> None:
+        """Insert or update agent_stats row.
+
+        INSERT columns: agent_id, n_calls, n_correct, n_wrong, total_pnl, last_updated
+        VALUES placeholders:           ?        ?        ?         ?       ?           ?
+        """
+        now = time.time()
+        n_correct_inc = 1 if correct else 0
+        n_wrong_inc = 0 if correct else 1
+        # First arg set for INSERT, second for the ON CONFLICT UPDATE
         conn.execute(
             """
             INSERT INTO agent_stats (agent_id, n_calls, n_correct, n_wrong, total_pnl, last_updated)
-            VALUES (?, 1, ?, 0, ?, ?)
+            VALUES (?, 1, ?, ?, ?, ?)
             ON CONFLICT(agent_id) DO UPDATE SET
                 n_calls = n_calls + 1,
                 n_correct = n_correct + ?,
@@ -251,8 +272,10 @@ class PerformanceMemory:
                 total_pnl = total_pnl + ?,
                 last_updated = ?
             """,
-            (agent_id, 1 if correct else 0, pnl, time.time(),
-             1 if correct else 0, 0 if correct else 1, pnl, time.time()),
+            # INSERT args: agent_id, n_correct, n_wrong, pnl, now
+            # UPDATE args: n_correct_inc, n_wrong_inc, pnl, now
+            (agent_id, n_correct_inc, n_wrong_inc, pnl, now,
+             n_correct_inc, n_wrong_inc, pnl, now),
         )
 
     # ------------------------------------------------------------------

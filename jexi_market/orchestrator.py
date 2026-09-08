@@ -99,6 +99,10 @@ class MarketBoss:
         risk_gate: Optional[RiskGate] = None,
         alpaca: Optional[AlpacaClient] = None,
         agents: Optional[Dict[str, BaseAgent]] = None,
+        fundamental_adapter: Optional[Any] = None,
+        news_adapter: Optional[Any] = None,
+        sector_classifier: Optional[Any] = None,
+        enable_enrichment: bool = True,
     ):
         self.config = config or MarketConfig()
         self.data_client = data_client or MarketDataClient()
@@ -111,6 +115,22 @@ class MarketBoss:
         self.aldric = ProfAldricAgent(config=self.config)
         self.vic = VicAgent(config=self.config)
         self.regime_classifier = RegimeClassifier()
+        # Enrichment adapters (free fundamental + news + sector).
+        # Lazy-imported so tests that don't need them stay fast.
+        self.enable_enrichment = enable_enrichment
+        if enable_enrichment:
+            from jexi_market.enrichment import (
+                FundamentalAdapter,
+                NewsAdapter,
+                SectorClassifier,
+            )
+            self.fundamental_adapter = fundamental_adapter or FundamentalAdapter()
+            self.news_adapter = news_adapter or NewsAdapter()
+            self.sector_classifier = sector_classifier or SectorClassifier(self.fundamental_adapter)
+        else:
+            self.fundamental_adapter = fundamental_adapter
+            self.news_adapter = news_adapter
+            self.sector_classifier = sector_classifier
 
     # ------------------------------------------------------------------
     # Single-symbol analysis
@@ -135,14 +155,59 @@ class MarketBoss:
             result.regime = regime_enum
             result.regime_score = regime_score
 
-            # 4. Build agent context
+            # 4. Build agent context — populate research_cache with real
+            #    fundamentals + news from free sources (yfinance).  When
+            #    enrichment fails (no network, no yfinance), the cache
+            #    stays empty and FundamentalAgent/NewsAgent return None
+            #    (no opinion) — never fabricated data.
+            research_cache: Dict[str, Any] = {}
+            if self.enable_enrichment:
+                try:
+                    fund = self.fundamental_adapter.get_fundamentals(symbol)
+                    if fund.ok:
+                        research_cache[f"fundamentals:{symbol}"] = {
+                            "pe_ratio": fund.pe_ratio,
+                            "forward_pe": fund.forward_pe,
+                            "price_to_book": fund.price_to_book,
+                            "profit_margin": fund.profit_margin,
+                            "gross_margin": fund.gross_margin,
+                            "operating_margin": fund.operating_margin,
+                            "return_on_equity": fund.return_on_equity,
+                            "revenue_growth": fund.revenue_growth,
+                            "earnings_growth": fund.earnings_growth,
+                            "quarterly_earnings_growth": fund.quarterly_earnings_growth,
+                            "debt_to_equity": fund.debt_to_equity,
+                            "current_ratio": fund.current_ratio,
+                            "market_cap": fund.market_cap,
+                            "sector": fund.sector,
+                            "industry": fund.industry,
+                            "source": fund.source,
+                        }
+                        if fund.sector:
+                            research_cache[f"sector:{symbol}"] = fund.sector
+                except Exception as exc:
+                    logger.debug("fundamental enrichment failed for %s: %s", symbol, exc)
+
+                try:
+                    news_snap = self.news_adapter.get_news(symbol)
+                    if news_snap.ok:
+                        research_cache[f"news:{symbol}"] = {
+                            "sentiment": news_snap.sentiment,
+                            "sentiment_score": news_snap.sentiment_score,
+                            "n_items": len(news_snap.items),
+                            "top_titles": [it.title for it in news_snap.items[:3]],
+                            "source": news_snap.source,
+                        }
+                except Exception as exc:
+                    logger.debug("news enrichment failed for %s: %s", symbol, exc)
+
             ctx = AgentContext(
                 regime=regime_enum.value,
                 regime_score=regime_score,
                 portfolio_value=100_000.0,
                 portfolio_drawdown=0.0,
                 risk_envelope=self.risk_gate.envelope,
-                research_cache={},
+                research_cache=research_cache,
             )
 
             # 5. Run every specialist agent (skip leadership agents —
@@ -188,7 +253,9 @@ class MarketBoss:
                 object.__setattr__(decision, "stop_loss", plan.stop_loss if plan.stop_loss else decision.stop_loss)
                 object.__setattr__(decision, "take_profit", plan.take_profit if plan.take_profit else decision.take_profit)
 
-            # 9. Risk gate
+            # 9. Risk gate — pass the real sector (from yfinance) so the
+            #    sector-concentration check actually works.
+            sector = research_cache.get(f"sector:{symbol}") if isinstance(research_cache, dict) else None
             portfolio_state = PortfolioState(
                 equity=100_000.0,
                 cash=100_000.0,
@@ -197,7 +264,7 @@ class MarketBoss:
                 paper_trading_days=self.memory.paper_trading_days(),
                 peak_equity=100_000.0,
             )
-            gate_result = self.risk_gate.check(decision, portfolio_state)
+            gate_result = self.risk_gate.check(decision, portfolio_state, sector=sector)
             result.gate_approved = gate_result.approved
             result.gate_violations = [v.to_dict() for v in gate_result.violations]
 

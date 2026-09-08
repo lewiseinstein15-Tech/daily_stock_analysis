@@ -288,3 +288,135 @@ register_strategy(Strategy(
     validation_status="unvalidated",
     fn=_factor_value,
 ))
+
+
+# ---------------------------------------------------------------------------
+# Additional strategies (closes spec section 14: multiple strategy families)
+# ---------------------------------------------------------------------------
+
+
+def _event_driven(factors: FactorSnapshot, params: Dict[str, Any]) -> StrategyResult:
+    """Event-driven: react to volume spikes + RSI extremes as catalysts.
+
+    A real event-driven strategy would consume earnings calendars,
+    FDA dates, FOMC meetings, etc.  Here we proxy "event" with a
+    volume spike (>1.5x 20d avg) combined with an RSI extreme.  This
+    is the same idea — events create dislocations — without requiring
+    a paid event feed.
+    """
+    if factors.rows < 30:
+        return StrategyResult(rationale="insufficient history")
+    score = 0.0
+    if factors.volume_ratio_5_20 > 1.5:
+        score += 0.3
+        if factors.rsi_14 is not None:
+            if factors.rsi_14 < 35:
+                score += 0.25  # oversold + volume = potential bottom
+            elif factors.rsi_14 > 65:
+                score -= 0.25  # overbought + volume = potential top
+    if factors.up_day_volume_dominance > 0.7:
+        score += 0.15
+    elif factors.up_day_volume_dominance < 0.3:
+        score -= 0.15
+    direction = SignalDirection.LONG if score >= 0.35 else (SignalDirection.SHORT if score <= -0.35 else SignalDirection.FLAT)
+    return StrategyResult(
+        direction=direction,
+        score=max(-1.0, min(1.0, score)),
+        stop_pct=0.06,
+        target_pct=0.12,
+        rationale=f"event-driven score {score:+.2f} (vol {factors.volume_ratio_5_20:.2f}x)",
+        params_used=params,
+    )
+
+
+def _statistical_arb(factors: FactorSnapshot, params: Dict[str, Any]) -> StrategyResult:
+    """Statistical arbitrage: mean-reversion on Bollinger z-score.
+
+    A real stat-arb would compute the z-score of a spread between two
+    cointegrated instruments.  Here we use the single-name Bollinger
+    z-score as a proxy: when price is >2σ below the mean, expect
+    reversion upward (long); >2σ above, expect reversion downward.
+    """
+    if factors.rows < 30 or not factors.bb_upper or not factors.bb_lower:
+        return StrategyResult(rationale="insufficient bands")
+    width = factors.bb_upper - factors.bb_lower
+    if width <= 0 or not factors.bb_middle:
+        return StrategyResult(rationale="zero band width")
+    # Z-score: (price - mean) / (sd).  Bollinger middle = SMA20 mean,
+    # and the bands are ±2σ, so position in [-1, +1] corresponds to ±2σ.
+    z = (factors.latest_close - factors.bb_middle) / (width / 2.0)
+    score = -z / 2.0  # mean-reversion: high z -> short, low z -> long
+    # Cap to [-1, +1]
+    score = max(-1.0, min(1.0, score))
+    direction = SignalDirection.LONG if score >= 0.3 else (SignalDirection.SHORT if score <= -0.3 else SignalDirection.FLAT)
+    return StrategyResult(
+        direction=direction,
+        score=score,
+        stop_pct=0.04,
+        target_pct=0.06,
+        rationale=f"stat-arb z={z:+.2f} score {score:+.2f}",
+        params_used=params,
+    )
+
+
+def _volatility_breakout(factors: FactorSnapshot, params: Dict[str, Any]) -> StrategyResult:
+    """Volatility breakout: ATR expansion + momentum confirmation.
+
+    When ATR / close > 4% AND momentum is positive, this is a volatility
+    expansion breakout — historically a profitable long setup when
+    confirmed by volume.
+    """
+    if factors.rows < 30 or not factors.atr_14 or not factors.latest_close:
+        return StrategyResult(rationale="insufficient ATR data")
+    atr_pct = factors.atr_14 / factors.latest_close
+    score = 0.0
+    if atr_pct > 0.04:
+        # Volatility expansion confirmed
+        if factors.momentum_3d > 0.02:
+            score += 0.4
+        elif factors.momentum_3d < -0.02:
+            score -= 0.4
+        if factors.volume_ratio_5_20 > 1.2:
+            score += 0.2  # volume confirms the breakout
+    if factors.annualised_vol > 0.5:
+        score *= 0.7  # dampen in extreme vol regimes
+    direction = SignalDirection.LONG if score >= 0.3 else (SignalDirection.SHORT if score <= -0.3 else SignalDirection.FLAT)
+    return StrategyResult(
+        direction=direction,
+        score=max(-1.0, min(1.0, score)),
+        stop_pct=max(0.04, atr_pct * 1.5),
+        target_pct=max(0.08, atr_pct * 3.0),
+        rationale=f"vol-breakout score {score:+.2f} (ATR% {atr_pct:.1%})",
+        params_used=params,
+    )
+
+
+register_strategy(Strategy(
+    name="event_driven",
+    description="Volume spikes + RSI extremes as event proxies",
+    regime="volatile",
+    parameters={},
+    benchmark="SPY",
+    validation_status="unvalidated",
+    fn=_event_driven,
+))
+
+register_strategy(Strategy(
+    name="statistical_arb",
+    description="Bollinger z-score mean-reversion (single-name stat-arb proxy)",
+    regime="sideways",
+    parameters={},
+    benchmark="SPY",
+    validation_status="unvalidated",
+    fn=_statistical_arb,
+))
+
+register_strategy(Strategy(
+    name="volatility_breakout",
+    description="ATR expansion + momentum + volume confirmation",
+    regime="volatile",
+    parameters={},
+    benchmark="QQQ",
+    validation_status="unvalidated",
+    fn=_volatility_breakout,
+))
