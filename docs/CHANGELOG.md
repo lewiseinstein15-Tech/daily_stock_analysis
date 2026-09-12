@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - [文档] 新增 `docs/jexi-architecture.md` 说明 JEXI 架构、配置、CLI 用法、收敛指标与纸面/研究边界。
 
 - [测试] 修复股票名称解析冷启动超时并发测试的同步竞态：在放行后台抓取前确认两个等待者均已结束并返回空结果，避免 Docker 发布门禁偶发失败。
+- [新功能] 新增 JEXI Market v0.1（`jexi_market/`）：独立自主多智能体市场情报与纸面交易系统，11 个 agent（MarketBoss 编排、Prof Aldric 审查、Vic 执行 + 8 个专家）全部基于类型化 contracts 与共享 FactorSnapshot，缺数据返回 None 绝不编造；硬风控门（单笔 2% / 仓位 25% / 日亏 4% 停机 / 回撤 10% 停机且仅人工可解除）；Alpaca 纸面下单（默认 paper 端点）；8 个回测策略（Sharpe/Sortino/maxDD/Calmar/胜率/盈利因子/alpha）；SQLite 绩效记忆与共识自适应权重；CLI `python -m jexi_market.cli`（status/once/scan/run/backtest/memory 等）。
+- [新功能] JEXI Market v0.2：真实 yfinance 基本面/新闻/行业富化（关键词情感分类器，无 LLM 依赖，缺数据返回 None）、walk-forward 前推回测（70% 样本内 / 30% 样本外）、策略横向对比与相关性聚类（≥0.7 归簇并纳入风控）、新增 3 策略（event_driven / statistical_arb / volatility_breakout，共 8 个）、自主调度器（扫描 q5min / 分析 q10min / 监控 q3min / 每日 22:00 UTC 总结）、自评估闭环（止损/止盈/最大持仓强制平仓 + agent 归因记账）、只读 FastAPI 仪表板（默认 8088 端口，不下单不暴露凭据）、ntfy 报告推送；实盘双重门禁（`JEXI_LIVE_TRADING_ENABLED=1` 且 ≥30 天纸面验证记录），修复 `PerformanceMemory._bump_agent` INSERT 列序导致的 `n_wrong` 记账损坏；测试扩展至 147 项。
+- [修复] JEXI Market Alpaca 凭据环境变量不一致：`jexi_market/config.py` 在 `ALPACA_API_SECRET` 未设置时回退读取 `ALPACA_SECRET_KEY`（`automated_trading_bot.py` 与 GitHub Actions Secrets 使用的变量名），两组入口共用同一套密钥；`.env.example` 两处 Alpaca 段补充回退说明，新增优先级/回退/缺省三个离线测试。
+- [测试] `tests/jexi_market/test_enrichment.py` 新增 `skipif` 守卫：mock `yfinance.Ticker` 的 4 个用例在可选依赖 yfinance 未安装的环境（零配置环境/CI 精简装）下干净跳过而非报错，与"零配置可运行"声明对齐。
 
 <!-- 新条目格式：- [类型] 描述（类型取值：新功能/改进/修复/文档/测试/chore）-->
 <!-- 每条独立一行追加到本段末尾，无需分类标题，合并时冲突最小 -->
