@@ -833,22 +833,25 @@ tests/jexi_market/
 - ✅ MarketBoss orchestrator with evidence-based consensus
 - ✅ Risk gate with hard envelope enforcement + halt behaviour
 - ✅ Alpaca paper-trading client (paper-first, live-gated)
-- ✅ 5 built-in strategies + backtesting engine with full metrics
+- ✅ 8 built-in strategies + backtesting engine with full metrics
 - ✅ ntfy reporter in the exact spec format
 - ✅ SQLite-backed performance memory with adaptive agent weights
 - ✅ Market scanner
 - ✅ Tool registry with MCP adapter
-- ✅ 98 passing tests
+- ✅ Walk-forward validation + correlation cluster detection in the backtester
+- ✅ Autonomous scheduler, self-eval loop, and read-only FastAPI dashboard
+- ✅ 147 passing tests
 
 **Next:**
 
-- 🔜 Real-time market monitor (streaming bars)
-- 🔜 Walk-forward optimisation in the backtester
-- 🔜 Sector classification (currently uses symbol as sector placeholder)
-- 🔜 Correlation cluster detection for `max_correlated_exposure`
-- 🔜 More strategies (event-driven, statistical arbitrage)
-- 🔜 Web dashboard that consumes the orchestrator's output (the existing
-  `apps/dsa-web/` React app can be extended for this)
+- 🔜 Real-time market monitor (streaming bars; the scheduler currently
+  polls on an interval)
+- 🔜 LLM-backed sentiment classification (the current news sentiment
+  classifier is keyword-based)
+- 🔜 Intraday correlation inputs (correlation currently uses daily
+  returns only)
+- 🔜 Deeper `apps/dsa-web/` integration for the dashboard (the current
+  dashboard is a standalone read-only FastAPI app)
 
 ---
 

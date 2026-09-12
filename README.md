@@ -24,7 +24,7 @@
 > multi-agent market intelligence & paper-trading system. See
 > [`jexi_market/README.md`](jexi_market/README.md) for the full
 > English documentation, architecture, agent hierarchy, risk
-> management, Alpaca paper trading, backtesting, and 98 passing tests.
+> management, Alpaca paper trading, backtesting, and 147 passing tests.
 >
 > Quick start:
 > ```bash
