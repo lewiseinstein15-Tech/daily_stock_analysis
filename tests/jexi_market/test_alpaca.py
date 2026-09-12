@@ -200,3 +200,29 @@ def test_execute_decision_computes_qty():
     # $10k / $100 = 100 shares
     assert order.qty == 100.0
     assert order.side == "buy"
+
+
+# --- Alpaca credential env-var fallback (ALPACA_SECRET_KEY) -----------------
+
+
+def test_config_prefers_alpaca_api_secret(monkeypatch):
+    """When both secret variables are set, ALPACA_API_SECRET wins."""
+    monkeypatch.setenv("ALPACA_API_SECRET", "primary")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "legacy")
+    config = MarketConfig()
+    assert config.alpaca_api_secret == "primary"
+
+
+def test_config_falls_back_to_alpaca_secret_key(monkeypatch):
+    """Legacy bots configure ALPACA_SECRET_KEY — jexi_market must accept it."""
+    monkeypatch.delenv("ALPACA_API_SECRET", raising=False)
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "legacy")
+    config = MarketConfig()
+    assert config.alpaca_api_secret == "legacy"
+
+
+def test_config_secret_empty_when_neither_variable_set(monkeypatch):
+    monkeypatch.delenv("ALPACA_API_SECRET", raising=False)
+    monkeypatch.delenv("ALPACA_SECRET_KEY", raising=False)
+    config = MarketConfig()
+    assert config.alpaca_api_secret == ""

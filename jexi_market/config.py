@@ -50,7 +50,17 @@ class MarketConfig:
 
     # --- Alpaca (paper trading by default) -------------------------------
     alpaca_api_key: str = field(default_factory=lambda: os.getenv("ALPACA_API_KEY", ""))
-    alpaca_api_secret: str = field(default_factory=lambda: os.getenv("ALPACA_API_SECRET", ""))
+    # Primary secret variable is ALPACA_API_SECRET; ALPACA_SECRET_KEY (the
+    # name used by the legacy automated_trading_bot.py and its GitHub Actions
+    # workflow) is accepted as a fallback so one set of credentials works for
+    # both entry points.
+    alpaca_api_secret: str = field(
+        default_factory=lambda: (
+            os.getenv("ALPACA_API_SECRET")
+            or os.getenv("ALPACA_SECRET_KEY")
+            or ""
+        )
+    )
     # "paper" (default) or "live" — live requires explicit env enable.
     alpaca_environment: str = field(default_factory=lambda: os.getenv("ALPACA_ENV", "paper").lower())
     alpaca_base_url: str = field(
