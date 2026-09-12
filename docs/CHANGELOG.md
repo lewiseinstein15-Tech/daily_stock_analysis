@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] **JEXI Market v0.3 — 24/7 自主交易就绪**：全新 `run247` 常驻运行器（市场时段感知、崩溃恢复、看门狗 N 连败自动熔断、心跳、JSON 健康端点 + Prometheus `/metrics`）、Telegram 远程控制（`/status /account /positions /pnl /pause /resume /kill /clear`）、结构化信心门槛（`JEXI_MIN_CONFIDENCE`，低于阈值不交易）与持久化 kill-switch（`killswitch on|off|pause|resume`，熔断状态跨重启保留）。
+- [新功能] **多券商抽象层**（`jexi_market/brokers/`）：统一 `Broker` 接口 + Alpaca（原生 bracket 单）、离线 Paper 模拟器（SQLite 持久化、本地止损/止盈撮合）、Binance 现货（HMAC 签名、默认测试网）、Pocket Option（社区 SSID websocket 协议，**非官方**，默认模拟账户）、MetaTrader 5（可选依赖），`JEXI_BROKER` 环境变量一键切换，`jexi-market brokers` 查看就绪状态。
+- [新功能] **订单生命周期管理器**（`execution/lifecycle.py`）：入场即挂 broker 端止损/止盈 bracket、指数退避重试（2/4/8s）、成交校验、每轮对账（memory ↔ 券商持仓）、止损/止盈本地兜底强平、外部平仓自动回写记忆。
+- [新功能] **仓位 sizing 引擎**（`risk/sizing.py`）：risk_parity / fixed_fraction / half-Kelly（由真实胜率与盈亏比驱动，负期望自动零仓）/ vol_target 四种方法，全部受风险信封硬约束。
+- [新功能] **7 个新策略 + 集成共识**（`strategies/extra.py`）：bollinger_squeeze、triple_ma_cross、supertrend、momentum_12_1、williams_reversal、vwap_reversion 与 `ensemble_consensus`（全策略 |score| 加权投票、60% 超级多数才出信号），内置策略总数 8→15。
+- [修复] 回测引擎三处致命问题：出场交易成本改按成交名义计（原按 |exit−entry| 盈亏计，费用近乎为零且多空不对称）、入场改为**次日开盘价成交**（原为信号当日收盘价成交，存在未来函数）、exposure 指标按权益曲线对齐（原为空集合死代码 + 分母错位）。
+- [修复] MACD EMA 种子双重计入首根（现与标准 EMA 对齐，常数序列 MACD 严格为 0）；Donchian breakout 策略改用真实 20 日高低通道（原 ATR 通道死代码，静默退化为动量策略）；FundamentalAgent 改读 orchestrator 实际写入的 `earnings_growth` 键（原 `eps_growth_yoy` 永不存在，EPS 评分分支永久失效）。
+- [修复] 风险闸门四项失活检查真实化：PortfolioState 改由**券商真实账户/持仓 + 持久化峰值权益/日内亏损**构建（原硬编码 100k 假快照，敞口/日损/回撤/行业集中度四条规则形同虚设）；零权益除零防护；仓位小幅超限（≤1.5x）降级为 WARNING 并实际应用 scaled_position_fraction（原字段死逻辑）。
+- [修复] 30 天实盘门槛漏洞：FLAT 决策不再记入 trades 表（原 30 天纯观望扫描即可解锁实盘）；`paper_trading_days` 仅统计有实际开仓价的交易；SHORT 决策在无持仓时明确拒绝（原静默开出裸空单）、卖出数量钳制到持有量；Alpaca qty 格式化为券商安全精度（原全精度浮点触发 HTTP 422）；合成数据用 SHA-256 稳定种子（原 `hash()` 受 PYTHONHASHSEED 影响跨进程不可复现）；报告时间用配置时区渲染（原 UTC 时间错贴时区标签）；autonomous scheduler 的 monitor 任务真正执行 self-eval 强平（原只数仓不动作，记忆/学习闭环断裂）；orchestrator 自适应权重真正生效（原计算后丢弃，F841 死代码）。
+- [测试] 新增 35 项 v0.3 回归/功能测试（`test_v03_bugfixes.py` + `test_v03_features.py`）：费用数学、次日开盘成交、MACD 种子、裸空拒绝、qty 精度、FLAT 不计入纸面天数、合成数据跨进程确定性、零权益防护、超限缩放、熔断跨实例恢复、四种 sizing、Paper 券商成交/强平/拒单、工厂选择、对账、信心门槛、市场时段、Telegram 指令、审计日志、Prometheus 输出。套件 146→181 项全绿。
 - [修复] 补充 `jexi_market/memory/store.py` 缺失的 `Tuple` typing 导入（flake8 F821，`agent_weight` 的 clamp 注解引用未导入名称；因 `from __future__ import annotations` 运行时不报错，但 CI flake8 门禁失败）。
 - [测试] jexi_market 套件 147 项测试全绿：`.github/ci-test-durations.json` 补齐 14 个 `tests/jexi_market/*` 分片时长（原先走中位数兜底权重，影响三分片均衡），`tests/conftest.py` 的 `_ThreadlessTestClient` 增加 `__test__ = False` 消除收集 `test_dashboard.py` 时的 PytestCollectionWarning。
 - [文档] 修正 README 与 `jexi_market/README.md` 的过时信息：测试计数 98→147、内置策略 5→8，路线图中 v0.2 已交付项（walk-forward 验证、sector 分类、correlation 聚类、dashboard/scheduler/self-eval）移入 Done，Next 更新为流式行情监控、LLM 情绪分类、日内相关性输入与 dsa-web 集成。

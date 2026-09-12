@@ -137,7 +137,14 @@ class NtfyReporter:
         timezone: str = "EAT",
     ) -> str:
         """Render the spec-compliant report as a plain string."""
-        now = _datetime.now(_tz.utc).strftime("%d %b %Y %H:%M")
+        # v0.3 fix: the timestamp is now rendered in the *configured*
+        # timezone (was: UTC time mislabeled with the tz string, which
+        # made every report's TIME line wrong by the UTC offset).
+        try:
+            from zoneinfo import ZoneInfo
+            now = _datetime.now(ZoneInfo(timezone)).strftime("%d %b %Y %H:%M")
+        except Exception:
+            now = _datetime.now(_tz.utc).strftime("%d %b %Y %H:%M")
         conf_pct = int(decision.confidence.score * 100)
         action = _ACTION_LABELS.get(decision.direction, "WATCH")
 

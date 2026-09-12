@@ -21,7 +21,7 @@ trading system.** The package ships real:
 - An Alpaca paper-trading client (defaults to paper, refuses live without
   30-day paper validation)
 - A backtesting engine with Sharpe / Sortino / max-drawdown / profit factor
-- A strategy framework with 5 built-in strategies
+- A strategy framework with 15 built-in strategies (v0.3: + squeeze, triple-MA, supertrend, momentum-12-1, williams, vwap-reversion, ensemble consensus)
 - A performance memory that adapts agent weights from historical accuracy
 - A scanner that surfaces trade candidates for deeper analysis
 - An ntfy reporter that produces the exact report format the spec demands
@@ -58,6 +58,53 @@ trading system.** The package ships real:
 24. [Project Structure](#24-project-structure)
 25. [Roadmap](#25-roadmap)
 26. [Limitations](#26-limitations)
+
+---
+
+## v0.3 — 24/7 Autonomous Trading (NEW)
+
+v0.3 turns JEXI Market from a paper-trading pilot into a **24/7-ready
+autonomous trading system**, borrowing the proven patterns from
+freqtrade (protections + dry-run + Telegram control),
+TradingAgents/ai-hedge-fund (multi-agent voting) and qlib (factor
+discipline):
+
+**Run it 24/7:**
+
+```bash
+python -m jexi_market.cli run247                 # market-hours aware
+JEXI_ASSET_CLASS=crypto python -m jexi_market.cli run247   # crypto 24/7
+JEXI_HEALTH_SERVER=1 python -m jexi_market.cli run247      # + :8090 health/metrics
+```
+
+The runner layers five safety gates before every order: persisted risk
+halt → operator pause → kill-switch file → market hours → structural
+confidence (`JEXI_MIN_CONFIDENCE`, default 0.55). A watchdog halts
+trading after `JEXI_MAX_CONSECUTIVE_FAILURES` broken cycles. Halts
+survive restarts (SQLite-persisted) and can only be cleared by a human
+(`killswitch off` or Telegram `/clear`).
+
+**Control it from your phone (Telegram):** set `JEXI_TELEGRAM_BOT_TOKEN`
++ `JEXI_TELEGRAM_CHAT_ID`, then chat `/status /account /positions /pnl
+/pause /resume /kill /clear`.
+
+**Trade any venue (broker abstraction):** `JEXI_BROKER` selects among
+`alpaca` (default), `paper` (offline SQLite simulator with local
+stop/TP fills — no credentials needed), `binance` (spot, testnet by
+default), `pocketoption` (unofficial SSID websocket, demo by default,
+⚠️ high risk) and `mt5`. Inspect readiness with
+`python -m jexi_market.cli brokers`.
+
+**Smarter sizing & exits:** four sizing methods (`JEXI_SIZING_METHOD` =
+risk_parity | fixed_fraction | kelly | vol_target — half-Kelly sizes
+from the system's own realised win-rate/payoff and goes flat on
+negative edge), bracket stop-loss/take-profit placed at the broker on
+entry, retry-with-backoff execution, fill verification, hourly
+reconciliation and automatic exit journaling.
+
+**Operate safely:** every gate decision, order, exit and halt is
+appended to `data/jexi_market/audit.jsonl`; the health endpoint exposes
+a JSON snapshot and Prometheus metrics.
 
 ---
 
@@ -439,6 +486,16 @@ JEXI_PAPER_VALIDATION_DAYS=30
 # Memory
 JEXI_MEMORY_DB=data/jexi_market/memory.sqlite
 
+# v0.3 — broker / 24/7 / gating (see .env.example for the full list)
+JEXI_BROKER=alpaca                 # alpaca | paper | binance | pocketoption | mt5
+JEXI_MIN_CONFIDENCE=0.55           # trade only when the consensus is sure
+JEXI_SIZING_METHOD=risk_parity     # risk_parity | fixed_fraction | kelly | vol_target
+JEXI_ASSET_CLASS=equity            # equity (market hours) | crypto (24/7)
+JEXI_TRADE_247=false               # force always-on trading
+JEXI_MAX_CONSECUTIVE_FAILURES=5    # watchdog halt threshold
+JEXI_TELEGRAM_BOT_TOKEN=           # optional remote control
+JEXI_TELEGRAM_CHAT_ID=
+
 # Scanner
 JEXI_SCANNER_UNIVERSE=AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,SPY,QQQ
 JEXI_SCANNER_LOOKBACK_DAYS=120
@@ -795,7 +852,7 @@ jexi_market/
 ├── execution/
 │   └── alpaca.py            # AlpacaClient (paper-first)
 ├── strategies/
-│   └── registry.py          # 5 built-in strategies: trend, momentum, mean_reversion, breakout, factor_value
+│   └── registry.py          # 15 built-in strategies incl. ensemble_consensus (v0.3)
 ├── backtest/
 │   └── engine.py            # Full metrics: Sharpe, Sortino, max-DD, profit factor, alpha
 ├── research/
@@ -840,7 +897,7 @@ tests/jexi_market/
 - ✅ Tool registry with MCP adapter
 - ✅ Walk-forward validation + correlation cluster detection in the backtester
 - ✅ Autonomous scheduler, self-eval loop, and read-only FastAPI dashboard
-- ✅ 147 passing tests
+- ✅ 181 passing tests (incl. 35 v0.3 regression/feature tests)
 
 **Next:**
 

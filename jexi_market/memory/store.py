@@ -321,10 +321,18 @@ class PerformanceMemory:
             return [dict(row) for row in rows]
 
     def paper_trading_days(self) -> int:
-        """Distinct trading days since first open trade — for the 30-day gate."""
+        """Distinct trading days with *real* trades — for the 30-day gate.
+
+        v0.3 fix: previously counted every recorded row, including
+        FLAT no-trade analyses, which meant 30 days of neutral scans
+        unlocked live trading without a single executed trade.
+        Only decisions with an actual entry price (i.e. an executed
+        position) count toward paper validation.
+        """
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT COUNT(DISTINCT date(decided_at, 'unixepoch')) AS n FROM trades"
+                "SELECT COUNT(DISTINCT date(decided_at, 'unixepoch')) AS n "
+                "FROM trades WHERE entry IS NOT NULL"
             ).fetchone()
             return int(row["n"]) if row else 0
 

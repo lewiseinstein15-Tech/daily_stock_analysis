@@ -2,14 +2,19 @@ name:  Automated Trading Bot
 
 on:
   schedule:
-    # Run every 2 hours during market hours (Mon-Fri, UTC)
-    # 9:30 AM ET (Market Open)
+    # Run every 2 hours during market hours (Mon-Fri, UTC).
+    # NOTE (v0.3): UTC->ET offset drifts with DST — these crons are 9:30 ET
+    # during EST and 10:30 ET during EDT (and 20:00 UTC is 15:00/16:00 ET).
+    # The bot double-checks the Alpaca clock before trading, so off-by-one
+    # hour during EDT only wastes a cycle. For exact ET scheduling, migrate
+    # to the 24/7 runner: `python -m jexi_market.cli run247`.
+    # 9:30 AM ET (Market Open, EST)
     - cron: '30 14 * * 1-5'
-    # 11:30 AM ET
+    # 11:30 AM ET (EST)
     - cron: '30 16 * * 1-5'
-    # 1:30 PM ET
+    # 1:30 PM ET (EST)
     - cron: '30 18 * * 1-5'
-    # 3:00 PM ET (Before market close)
+    # 3:00 PM ET (EST, before market close)
     - cron: '00 20 * * 1-5'
 
   # Manual trigger

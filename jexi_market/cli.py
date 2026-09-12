@@ -332,6 +332,98 @@ def cmd_correlation(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# v0.3: 24/7 runner + broker + control commands
+# ---------------------------------------------------------------------------
+
+
+def cmd_run247(args: argparse.Namespace) -> int:
+    """Run the true 24/7 autonomous trading loop."""
+    from jexi_market.runner import MarketRunner247
+    config = get_config()
+    runner = MarketRunner247(config, enable_telegram=not args.no_telegram)
+    print("""
+  ================== JEXI MARKET 24/7 RUNNER ==================
+  broker         : {broker}
+  paper mode     : {paper}
+  min confidence : {conf:.0%}
+  scheduling     : {sched}
+  telegram       : {tg}
+  health server  : {health}
+=============================================================""".format(
+        broker=runner.broker.name,
+        paper=runner.broker.paper,
+        conf=config.min_confidence,
+        sched="always-on" if config.trade_247 else f"market-hours aware ({config.asset_class})",
+        tg="on" if runner._telegram else "off",
+        health="on (port 8090)" if runner._health_thread else "off (JEXI_HEALTH_SERVER=1)",
+    ))
+    runner.run_forever(trade_cycle_seconds=args.cycle_seconds)
+    return 0
+
+
+def cmd_account(args: argparse.Namespace) -> int:
+    """Show the configured broker's account + positions."""
+    import json as _json
+    from jexi_market.brokers import build_broker
+    broker = build_broker(get_config())
+    acct = broker.get_account()
+    positions = broker.get_positions()
+    print(f"Broker : {broker.name} ({'paper' if broker.paper else 'LIVE'})")
+    print(f"Ready  : {'yes' if broker.configured else 'NO (missing credentials/deps)'}")
+    print(_json.dumps(acct.to_dict(), indent=2))
+    if positions:
+        print(f"\nOpen positions ({len(positions)}):")
+        for p in positions:
+            print(f"  {p.symbol:<12} {p.qty:>10g} {p.side:<6} "
+                  f"value {p.market_value:>12,.2f}  PnL {p.unrealized_pl:>+10,.2f}")
+    else:
+        print("\nNo open positions.")
+    return 0
+
+
+def cmd_brokers(args: argparse.Namespace) -> int:
+    """List every broker adapter and its readiness."""
+    import json as _json
+    from jexi_market.brokers.factory import broker_status
+    print(_json.dumps(broker_status(get_config()), indent=2, default=str))
+    return 0
+
+
+def cmd_killswitch(args: argparse.Namespace) -> int:
+    """Set / clear the persistent kill-switch (halt) or pause."""
+    from jexi_market.risk.state import RiskStateStore
+    store = RiskStateStore(get_config().state_db_path)
+    if args.action == "on":
+        store.set_halt(args.reason or "manual kill-switch CLI")
+        print("KILL-SWITCH ON — trading halted (persists across restarts)")
+    elif args.action == "off":
+        store.clear_halt()
+        print("Kill-switch cleared")
+    elif args.action == "pause":
+        store.set_pause(args.reason or "manual pause CLI")
+        print("Paused — new trades blocked (killswitch resume to continue)")
+    elif args.action == "resume":
+        store.clear_pause()
+        print("Resumed")
+    elif args.action == "status":
+        import json as _json
+        print(_json.dumps(store.load(), indent=2, default=str))
+    return 0
+
+
+def cmd_telegram(args: argparse.Namespace) -> int:
+    """Run ONLY the Telegram control loop (foreground)."""
+    from jexi_market.runner import MarketRunner247
+    runner = MarketRunner247(get_config(), enable_telegram=True, enable_health_server=False)
+    if not runner._telegram:
+        print("Telegram not configured — set JEXI_TELEGRAM_BOT_TOKEN (and JEXI_TELEGRAM_CHAT_ID)")
+        return 1
+    print("Telegram controller running — Ctrl-C to stop")
+    runner._telegram.poll_forever()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jexi-market",
@@ -416,6 +508,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_corr.add_argument("--days", type=int, default=120)
     p_corr.add_argument("--threshold", type=float, default=0.7)
     p_corr.set_defaults(func=cmd_correlation)
+
+    # ---- v0.3: 24/7 operation ----
+    p247 = sub.add_parser("run247", help="Run the true 24/7 autonomous trading loop")
+    p247.add_argument("--cycle-seconds", type=int, default=900, help="Seconds between trade cycles")
+    p247.add_argument("--no-telegram", action="store_true", help="Disable the Telegram controller")
+    p247.set_defaults(func=cmd_run247)
+
+    p_acct = sub.add_parser("account", help="Show the configured broker's account + positions")
+    p_acct.set_defaults(func=cmd_account)
+
+    p_brk = sub.add_parser("brokers", help="List broker adapters and readiness")
+    p_brk.set_defaults(func=cmd_brokers)
+
+    p_kill = sub.add_parser("killswitch", help="Persistent kill-switch: on|off|pause|resume|status")
+    p_kill.add_argument("action", choices=["on", "off", "pause", "resume", "status"])
+    p_kill.add_argument("--reason", default="", help="Reason recorded with the action")
+    p_kill.set_defaults(func=cmd_killswitch)
+
+    p_tg = sub.add_parser("telegram", help="Run only the Telegram control loop (foreground)")
+    p_tg.set_defaults(func=cmd_telegram)
     return parser
 
 

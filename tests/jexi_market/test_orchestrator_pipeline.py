@@ -14,7 +14,10 @@ from jexi_market.agents.leadership import RegimeClassifier
 
 
 def _make_synthetic_snapshot(symbol="SYNTH", rows=120, drift=0.002) -> MarketSnapshot:
-    df = load_synthetic_frame(symbol, days=rows, seed=hash(symbol) % 1000)
+    # NB: deterministic seed — hash() is salted per process and would make
+    # the consensus direction (and hence memory row count) flaky.
+    seed = sum(bytearray(symbol.encode("utf-8"))) % 1000
+    df = load_synthetic_frame(symbol, days=rows, seed=seed)
     # Apply drift to closes
     df["close"] = df["close"] * (1.0 + drift * df.index)
     df["high"] = df["close"] * 1.01

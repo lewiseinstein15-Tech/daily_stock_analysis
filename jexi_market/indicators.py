@@ -69,7 +69,12 @@ def rsi_wilder(closes: List[float], window: int = 14) -> Optional[float]:
 
 
 def macd(closes: List[float], fast: int = 12, slow: int = 26, signal: int = 9):
-    """Return (macd_line, signal_line, histogram) or None triple."""
+    """Return (macd_line, signal_line, histogram) or None triple.
+
+    The EMA seeds are the SMA of the first ``fast`` / ``slow`` closes;
+    the recursive update then starts *after* the seed window so no bar
+    is double-counted (the seed already contains ``closes[fast-1]``).
+    """
     if len(closes) < slow + signal:
         return None, None, None
     ema_fast_series: List[float] = []
@@ -77,14 +82,15 @@ def macd(closes: List[float], fast: int = 12, slow: int = 26, signal: int = 9):
     alpha_fast = 2.0 / (fast + 1.0)
     alpha_slow = 2.0 / (slow + 1.0)
     ef = sum(closes[:fast]) / fast
+    ema_fast_series.append(ef)
+    for v in closes[fast:]:
+        ef = alpha_fast * v + (1.0 - alpha_fast) * ef
+        ema_fast_series.append(ef)
     es = sum(closes[:slow]) / slow
-    for i, v in enumerate(closes):
-        if i >= fast - 1:
-            ef = alpha_fast * v + (1.0 - alpha_fast) * ef
-            ema_fast_series.append(ef)
-        if i >= slow - 1:
-            es = alpha_slow * v + (1.0 - alpha_slow) * es
-            ema_slow_series.append(es)
+    ema_slow_series.append(es)
+    for v in closes[slow:]:
+        es = alpha_slow * v + (1.0 - alpha_slow) * es
+        ema_slow_series.append(es)
     n = min(len(ema_fast_series), len(ema_slow_series))
     macd_series = [ema_fast_series[-n + i] - ema_slow_series[-n + i] for i in range(n)]
     signal_series: List[float] = []
@@ -129,6 +135,32 @@ def atr(highs: List[float], lows: List[float], closes: List[float], window: int 
     for i in range(window, len(trs)):
         atr_prev = (atr_prev * (window - 1) + trs[i]) / window
     return atr_prev
+
+
+def williams_r(highs: List[float], lows: List[float], closes: List[float], window: int = 14) -> Optional[float]:
+    """Williams %R over ``window`` bars — range -100..0."""
+    n = min(len(highs), len(lows), len(closes))
+    if n < window or window <= 0:
+        return None
+    hh = max(highs[n - window:n])
+    ll = min(lows[n - window:n])
+    rng = hh - ll
+    if rng <= 0:
+        return -50.0
+    return -100.0 * (hh - closes[-1]) / rng
+
+
+def vwap(typical_prices: List[float], volumes: List[float], window: int = 20) -> Optional[float]:
+    """Rolling VWAP over the last ``window`` bars."""
+    n = min(len(typical_prices), len(volumes))
+    if n < window or window <= 0:
+        return None
+    tp_w = typical_prices[n - window:n]
+    v_w = volumes[n - window:n]
+    total_v = sum(v_w)
+    if total_v <= 0:
+        return None
+    return sum(tp * v for tp, v in zip(tp_w, v_w)) / total_v
 
 
 def annualised_volatility(closes: List[float]) -> float:
@@ -203,7 +235,9 @@ class FactorSnapshot:
     rows: int = 0
     latest_close: float = 0.0
     sma_5: Optional[float] = None
+    sma_9: Optional[float] = None
     sma_20: Optional[float] = None
+    sma_21: Optional[float] = None
     sma_50: Optional[float] = None
     sma_200: Optional[float] = None
     rsi_14: Optional[float] = None
@@ -219,8 +253,15 @@ class FactorSnapshot:
     momentum_3d: float = 0.0
     momentum_10d: float = 0.0
     momentum_20d: float = 0.0
+    momentum_63d: float = 0.0
     volume_ratio_5_20: float = 1.0
     up_day_volume_dominance: float = 0.5
+    # v0.3 additions — richer factor set for the expanded strategy families
+    donchian_high_20: Optional[float] = None
+    donchian_low_20: Optional[float] = None
+    williams_r_14: Optional[float] = None
+    vwap_20: Optional[float] = None
+    atr_pct: Optional[float] = None
 
     def to_dict(self) -> Dict[str, float]:
         out: Dict[str, float] = {"rows": float(self.rows), "latest_close": self.latest_close}
@@ -258,7 +299,9 @@ def compute_factors(df: Optional[pd.DataFrame], symbol: str = "") -> FactorSnaps
     snap.latest_close = closes[-1]
 
     snap.sma_5 = sma(closes, 5)
+    snap.sma_9 = sma(closes, 9)
     snap.sma_20 = sma(closes, 20)
+    snap.sma_21 = sma(closes, 21)
     snap.sma_50 = sma(closes, 50)
     snap.sma_200 = sma(closes, 200)
     snap.rsi_14 = rsi_wilder(closes, 14)
@@ -270,8 +313,22 @@ def compute_factors(df: Optional[pd.DataFrame], symbol: str = "") -> FactorSnaps
     if bb and bb[0] is not None:
         snap.bb_upper, snap.bb_middle, snap.bb_lower = bb
     snap.atr_14 = atr(highs, lows, closes, 14)
+    if snap.atr_14 and snap.latest_close:
+        snap.atr_pct = snap.atr_14 / snap.latest_close
     snap.annualised_vol = annualised_volatility(closes)
     snap.drawdown = drawdown(closes)
+
+    # v0.3 factor extensions
+    if len(highs) >= 20 and len(lows) >= 20:
+        snap.donchian_high_20 = max(highs[-20:])
+        snap.donchian_low_20 = min(lows[-20:])
+    snap.williams_r_14 = williams_r(highs, lows, closes, 14)
+    if len(volumes) >= 20 and len(closes) >= 20 and len(highs) >= 20 and len(lows) >= 20:
+        typicals = [
+            (h_ + l_ + c_) / 3.0
+            for h_, l_, c_ in zip(highs[-20:], lows[-20:], closes[-20:])
+        ]
+        snap.vwap_20 = vwap(typicals, volumes[-20:], 20)
 
     def pct_return(n: int) -> float:
         if len(closes) <= n or closes[-1 - n] == 0:
@@ -281,6 +338,7 @@ def compute_factors(df: Optional[pd.DataFrame], symbol: str = "") -> FactorSnaps
     snap.momentum_3d = pct_return(3)
     snap.momentum_10d = pct_return(10)
     snap.momentum_20d = pct_return(20)
+    snap.momentum_63d = pct_return(63)
 
     if len(volumes) >= 20:
         recent = sum(volumes[-5:]) / 5

@@ -156,8 +156,11 @@ def run_backtest(
     peak = start_cash
     max_dd = 0.0
     cash_used_for_trades = 0.0  # tracks turnover
+    days_in_market = 0          # v0.3: honest exposure accounting
 
     position: Optional[Dict[str, Any]] = None  # {entry, qty, direction, stop, target, entry_date, entry_idx}
+    # Signal generated on day i is executed on day i+1's open (no look-ahead).
+    pending_signal: Optional[Dict[str, Any]] = None
 
     cost_rate = transaction_cost_bps / 10_000.0
     slip_rate = slippage_bps / 10_000.0
@@ -165,16 +168,69 @@ def run_backtest(
     equity_curve: List[float] = []
     equity_dates: List[str] = []
 
+    opens = [float(x) for x in df["open"].dropna().tolist()] if "open" in df.columns else list(closes)
+    if len(opens) != len(closes):
+        opens = list(closes)
+
     for i in range(30, len(closes)):
-        # Compute factors from data ending at day i (no look-ahead).
+        close_today = closes[i]
+        date_today = _date_str(dates[i])
+        open_today = opens[i]
+
+        # ---- 0. Execute a pending signal at TODAY'S OPEN ----------------
+        # The signal was computed from data ending YESTERDAY (day i-1),
+        # so filling at today's open is look-ahead-free.
+        if position is None and pending_signal is not None and i > 30 and open_today > 0:
+            sig_direction = pending_signal["direction"]
+            stop_pct = pending_signal["stop_pct"]
+            target_pct = pending_signal["target_pct"]
+            score = pending_signal["score"]
+            pending_signal = None
+            if open_today and close_today:
+                fraction = min(risk_per_trade / max(stop_pct, 1e-6), max_position_fraction) * (0.5 + 0.5 * abs(score))
+                if sig_direction == SignalDirection.LONG:
+                    entry_price = open_today * (1.0 + slip_rate)
+                else:
+                    entry_price = open_today * (1.0 - slip_rate)
+                qty = (equity * fraction) / entry_price if entry_price > 0 else 0
+                if qty > 0:
+                    # Charge entry cost on the traded notional
+                    cost = qty * entry_price * cost_rate
+                    equity -= cost
+                    cash_used_for_trades += qty * entry_price
+
+                    if sig_direction == SignalDirection.LONG:
+                        stop = entry_price * (1.0 - stop_pct)
+                        target = entry_price * (1.0 + target_pct)
+                    else:
+                        stop = entry_price * (1.0 + stop_pct)
+                        target = entry_price * (1.0 - target_pct)
+
+                    position = {
+                        "entry": entry_price,
+                        "qty": qty,
+                        "direction": sig_direction.value,
+                        "stop": stop,
+                        "target": target,
+                        "entry_date": date_today,
+                        "entry_idx": i,
+                    }
+
+        # ---- 1. Compute factors from data ending TODAY (day i) ---------
         window = df.iloc[: i + 1]
         factors = compute_factors(window, symbol=symbol)
         sig = strategy.run(factors)
 
-        close_today = closes[i]
-        date_today = _date_str(dates[i])
+        # Non-flat signal -> schedule for execution at tomorrow's open.
+        if position is None and sig.direction != SignalDirection.FLAT and i + 1 < len(closes):
+            pending_signal = {
+                "direction": sig.direction,
+                "stop_pct": max(0.02, sig.stop_pct),
+                "target_pct": sig.target_pct,
+                "score": sig.score,
+            }
 
-        # Manage open position first.
+        # ---- 2. Manage open position (stops/targets at today's close) ---
         if position is not None:
             entry = position["entry"]
             direction = position["direction"]
@@ -211,16 +267,17 @@ def run_backtest(
                     exit_price *= (1.0 - slip_rate)
                 else:
                     exit_price *= (1.0 + slip_rate)
-                # Compute PnL
+                # Compute raw PnL
                 if direction == "long":
                     pnl_pct = exit_price / entry - 1.0
                 else:
                     pnl_pct = 1.0 - exit_price / entry
-                # Net of transaction cost
-                cost = abs(exit_price - entry) * position["qty"] * cost_rate / max(exit_price, 1e-9) * exit_price
+                # Exit transaction cost on the traded NOTIONAL (v0.3 fix:
+                # was proportional to |exit-entry| PnL, not trade value).
+                cost = position["qty"] * exit_price * cost_rate
                 pnl_dollars = position["qty"] * (exit_price - entry) * (1 if direction == "long" else -1) - cost
                 equity += pnl_dollars
-                cash_used_for_trades += position["qty"] * entry + position["qty"] * exit_price
+                cash_used_for_trades += position["qty"] * exit_price
 
                 result.trades.append(BacktestTrade(
                     entry_date=_date_str(dates[position["entry_idx"]]),
@@ -235,37 +292,6 @@ def run_backtest(
                 ))
                 position = None
 
-        # Open new position if signal is non-flat.
-        if position is None and sig.direction != SignalDirection.FLAT:
-            stop_pct = max(0.02, sig.stop_pct)
-            target_pct = sig.target_pct
-            stop_distance = stop_pct
-            fraction = min(risk_per_trade / stop_distance, max_position_fraction) * (0.5 + 0.5 * abs(sig.score))
-            entry_price = close_today * (1.0 + slip_rate if sig.direction == SignalDirection.LONG else (1.0 - slip_rate))
-            qty = (equity * fraction) / entry_price if entry_price > 0 else 0
-            if qty > 0:
-                # Charge entry cost
-                cost = qty * entry_price * cost_rate
-                equity -= cost
-                cash_used_for_trades += qty * entry_price
-
-                if sig.direction == SignalDirection.LONG:
-                    stop = entry_price * (1.0 - stop_pct)
-                    target = entry_price * (1.0 + target_pct)
-                else:
-                    stop = entry_price * (1.0 + stop_pct)
-                    target = entry_price * (1.0 - target_pct)
-
-                position = {
-                    "entry": entry_price,
-                    "qty": qty,
-                    "direction": sig.direction.value,
-                    "stop": stop,
-                    "target": target,
-                    "entry_date": date_today,
-                    "entry_idx": i,
-                }
-
         # Mark-to-market equity for the curve.
         if position is not None:
             entry = position["entry"]
@@ -274,6 +300,7 @@ def run_backtest(
             else:
                 mtm = position["qty"] * (entry - close_today)
             current_equity = equity + mtm
+            days_in_market += 1
         else:
             current_equity = equity
 
@@ -352,9 +379,10 @@ def run_backtest(
             result.benchmark_return = closes[-1] / closes[0] - 1.0
             result.alpha = result.total_return - result.benchmark_return
 
-    # Exposure: fraction of days with an open position
+    # Exposure: fraction of days with an open position, aligned with the
+    # equity curve (v0.3 fix — was dead-coded with an empty set and a
+    # mis-scaled denominator).
     if equity_curve:
-        days_in_market = sum(1 for i in range(1, len(closes)) if i in {t.entry_idx for t in []} or _was_in_position(i, result.trades, dates))
         result.exposure = days_in_market / max(1, len(equity_curve))
     # Turnover: total traded value / average equity
     avg_equity = sum(equity_curve) / len(equity_curve) if equity_curve else start_cash

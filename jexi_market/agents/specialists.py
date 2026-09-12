@@ -241,7 +241,10 @@ class FundamentalAgent(BaseAgent):
 
         # If we got real fundamentals, score them.
         pe = fundamentals.get("pe_ratio")
-        eps_growth = fundamentals.get("eps_growth_yoy")
+        # v0.3 fix: the orchestrator's FundamentalAdapter populates the
+        # cache key "earnings_growth" — "eps_growth_yoy" never existed,
+        # so the EPS-growth scoring branch was permanently dead.
+        eps_growth = fundamentals.get("earnings_growth")
         margin = fundamentals.get("gross_margin")
         score = 0.0
         claims = []

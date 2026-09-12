@@ -102,6 +102,39 @@ class MarketConfig:
         default_factory=lambda: os.getenv("JEXI_MEMORY_DB", "data/jexi_market/memory.sqlite")
     )
 
+    # --- v0.3: broker selection ---------------------------------------------
+    # One of: alpaca | paper | binance | pocketoption | mt5
+    broker: str = field(default_factory=lambda: os.getenv("JEXI_BROKER", "alpaca").lower())
+
+    # --- v0.3: trade gating -------------------------------------------------
+    # Only execute decisions whose structural confidence >= threshold.
+    min_confidence: float = field(default_factory=lambda: _env_float("JEXI_MIN_CONFIDENCE", 0.55))
+    # Position sizing method: risk_parity | fixed_fraction | kelly | vol_target
+    sizing_method: str = field(default_factory=lambda: os.getenv("JEXI_SIZING_METHOD", "risk_parity").lower())
+    vol_target: float = field(default_factory=lambda: _env_float("JEXI_VOL_TARGET", 0.15))
+    base_fraction: float = field(default_factory=lambda: _env_float("JEXI_BASE_FRACTION", 0.10))
+
+    # --- v0.3: 24/7 runner --------------------------------------------------
+    # Asset class drives market-hours handling: equity (market hours) or
+    # crypto (truly 24/7).
+    asset_class: str = field(default_factory=lambda: os.getenv("JEXI_ASSET_CLASS", "equity").lower())
+    # Force trading even outside market hours (overrides asset_class).
+    trade_247: bool = field(default_factory=lambda: _env_bool("JEXI_TRADE_247", False))
+    # Consecutive pipeline failures before the runner halts (watchdog).
+    max_consecutive_failures: int = field(default_factory=lambda: _env_int("JEXI_MAX_CONSECUTIVE_FAILURES", 5))
+    # Optional human kill-switch file — if it exists, trading pauses.
+    kill_switch_file: str = field(default_factory=lambda: os.getenv("JEXI_KILL_SWITCH_FILE", ""))
+    state_db_path: str = field(default_factory=lambda: os.getenv("JEXI_STATE_DB", "data/jexi_market/state.sqlite"))
+    audit_log_path: str = field(default_factory=lambda: os.getenv("JEXI_AUDIT_LOG", "data/jexi_market/audit.jsonl"))
+
+    # --- v0.3: Telegram remote control (optional) ---------------------------
+    telegram_bot_token: str = field(default_factory=lambda: os.getenv("JEXI_TELEGRAM_BOT_TOKEN", ""))
+    telegram_chat_id: str = field(default_factory=lambda: os.getenv("JEXI_TELEGRAM_CHAT_ID", ""))
+
+    # --- v0.3: Binance --------------------------------------------------------
+    # Keys are read directly by the adapter (BINANCE_API_KEY / SECRET /
+    # BINANCE_TESTNET) — nothing duplicated here on purpose.
+
     # --- Research backend --------------------------------------------------
     # Reuses src.jexi.research infrastructure: "auto" | "opencode_cli" |
     # "litellm" | "off".  Default "off" keeps the pilot deterministic.
@@ -165,6 +198,13 @@ class MarketConfig:
             "max_risk_per_trade": self.max_risk_per_trade,
             "max_position_fraction": self.max_position_fraction,
             "drawdown_halt_threshold": self.drawdown_halt_threshold,
+            # v0.3
+            "broker": self.broker,
+            "min_confidence": self.min_confidence,
+            "sizing_method": self.sizing_method,
+            "asset_class": self.asset_class,
+            "trade_247": self.trade_247,
+            "telegram_enabled": bool(self.telegram_bot_token),
         }
 
 

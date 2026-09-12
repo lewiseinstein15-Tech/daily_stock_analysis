@@ -134,19 +134,40 @@ class AutonomousScheduler:
     def job_monitor(self) -> JobResult:
         """Check open positions and close any that hit risk limits.
 
-        In paper mode without Alpaca configured, this just reports the
-        open trade count from memory.  With Alpaca configured, it
-        checks real positions and closes any that breached stops.
+        v0.3 fix: this job previously only *counted* open trades and
+        never closed anything — the documented stop/TP/max-holding
+        monitoring was a no-op, so the memory/learning loop never
+        advanced during autonomous runs.  It now runs the
+        :class:`SelfEvaluationLoop` (same exit rules as the backtester)
+        on every invocation, then reports real venue positions when a
+        broker is configured.
         """
         result = JobResult(job_name="monitor")
         try:
             recent = self.memory.recent_trades(limit=50)
             open_trades = [t for t in recent if t.get("outcome") == "open"]
-            result.success = True
             result.summary = {
                 "n_open_trades": len(open_trades),
                 "symbols": [t.get("symbol") for t in open_trades],
             }
+            # Actually evaluate exits: close stop/TP/max-holding trades
+            # against the latest prices and update agent weights.
+            try:
+                from jexi_market.self_eval import SelfEvaluationLoop
+                loop = SelfEvaluationLoop(
+                    self.config,
+                    self.memory,
+                    data_client=self.boss.data_client,
+                )
+                closed = loop.evaluate_open_trades()
+                result.summary["closed_trades"] = len(closed)
+                result.summary["closed_symbols"] = [
+                    {"symbol": c.symbol, "reason": c.exit_reason, "pnl_pct": round(c.pnl_pct, 4)}
+                    for c in closed
+                ]
+            except Exception as exc:
+                result.summary["self_eval_error"] = str(exc)
+                logger.warning("self-eval inside monitor failed: %s", exc)
             # If Alpaca is configured, pull real positions
             if self.boss.alpaca.configured:
                 try:
@@ -157,6 +178,7 @@ class AutonomousScheduler:
                     )
                 except Exception as exc:
                     result.summary["alpaca_error"] = str(exc)
+            result.success = True
         except Exception as exc:
             result.error = str(exc)
             logger.exception("monitor job failed")

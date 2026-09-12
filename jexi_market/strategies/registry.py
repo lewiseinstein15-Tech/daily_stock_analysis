@@ -191,27 +191,49 @@ def _mean_reversion(factors: FactorSnapshot, params: Dict[str, Any]) -> Strategy
 
 
 def _breakout(factors: FactorSnapshot, params: Dict[str, Any]) -> StrategyResult:
-    """Breakout: close above 20-day high → long; below 20-day low → short."""
+    """Donchian breakout: close above the 20-day high → long; below the
+    20-day low → short.  Volume expansion confirms.
+
+    v0.3 fix: the FactorSnapshot now carries the real Donchian channel
+    (``donchian_high_20`` / ``donchian_low_20``) computed from the
+    high/low series — the old implementation only computed unused ATR
+    bands and silently degraded into a momentum strategy.
+    """
     if factors.rows < 25:
         return StrategyResult(rationale="insufficient history")
-    # We don't have the high/low series here directly; approximate with ATR.
-    if not factors.atr_14 or not factors.latest_close:
-        return StrategyResult(rationale="no ATR data")
-    upper = factors.latest_close + factors.atr_14
-    lower = factors.latest_close - factors.atr_14
-    # Use momentum as a proxy for breakout direction
+    if not factors.donchian_high_20 or not factors.donchian_low_20 or not factors.latest_close:
+        return StrategyResult(rationale="no Donchian data")
     score = 0.0
-    if factors.momentum_3d > 0.02 and factors.volume_ratio_5_20 > 1.2:
+    # The latest bar is included in the 20-day window, so require a
+    # decisive break: strictly above the channel high (long) / below
+    # the channel low (short).
+    if factors.latest_close > factors.donchian_high_20:
         score += 0.5
-    elif factors.momentum_3d < -0.02 and factors.volume_ratio_5_20 > 1.2:
+        if factors.volume_ratio_5_20 > 1.2:
+            score += 0.15
+    elif factors.latest_close < factors.donchian_low_20:
         score -= 0.5
+        if factors.volume_ratio_5_20 > 1.2:
+            score -= 0.15
+    else:
+        return StrategyResult(
+            direction=SignalDirection.FLAT,
+            rationale=(
+                f"inside Donchian channel "
+                f"({factors.donchian_low_20:.2f} .. {factors.donchian_high_20:.2f})"
+            ),
+            params_used=params,
+        )
     direction = SignalDirection.LONG if score >= 0.3 else (SignalDirection.SHORT if score <= -0.3 else SignalDirection.FLAT)
     return StrategyResult(
         direction=direction,
         score=max(-1.0, min(1.0, score)),
         stop_pct=0.05,
         target_pct=0.15,
-        rationale=f"breakout score {score:+.2f} (ATR {factors.atr_14:.2f})",
+        rationale=(
+            f"Donchian breakout score {score:+.2f} "
+            f"(channel {factors.donchian_low_20:.2f}-{factors.donchian_high_20:.2f})"
+        ),
         params_used=params,
     )
 
@@ -271,7 +293,7 @@ register_strategy(Strategy(
 
 register_strategy(Strategy(
     name="breakout",
-    description="ATR-based breakout with volume confirmation",
+    description="Donchian 20-day channel breakout with volume confirmation",
     regime="volatile",
     parameters={},
     benchmark="QQQ",

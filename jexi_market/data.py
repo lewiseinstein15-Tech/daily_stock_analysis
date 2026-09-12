@@ -208,10 +208,15 @@ def load_synthetic_frame(symbol: str, days: int = 120, seed: int = 0) -> pd.Data
     volume``.  Uses a simple seeded random walk so backtest math is
     verifiable without external network calls.
     """
+    import hashlib
     import math
     import random
 
-    rng = random.Random(seed + hash(symbol) % 1000)
+    # v0.3 fix: hash() on str is salted per process (PYTHONHASHSEED),
+    # which made the "deterministic" fixture differ between runs.
+    # Use a stable SHA-256-derived seed instead.
+    symbol_seed = int(hashlib.sha256(symbol.encode("utf-8")).hexdigest()[:8], 16) % 1000
+    rng = random.Random(seed + symbol_seed)
     rows = []
     price = 100.0
     start = pd.Timestamp("2024-01-01")

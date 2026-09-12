@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from jexi_market.contracts import (
     Decision,
@@ -99,11 +99,30 @@ class RiskGate:
     for every decision before it becomes a paper order.
     """
 
-    def __init__(self, envelope: Optional[RiskEnvelope] = None):
+    def __init__(
+        self,
+        envelope: Optional[RiskEnvelope] = None,
+        *,
+        state_store: Optional[Any] = None,
+    ):
         self.envelope = envelope or RiskEnvelope()
         self._halted = False
         self._halt_reason = ""
         self._halted_at: Optional[float] = None
+        # Optional persistent state store (v0.3): halts survive process
+        # restarts — previously an in-memory halt was silently cleared
+        # whenever the bot restarted.
+        self._state_store = state_store
+        if self._state_store is not None:
+            try:
+                st = self._state_store.load()
+                if st.get("halted"):
+                    self._halted = True
+                    self._halt_reason = str(st.get("halt_reason", "persisted halt"))
+                    self._halted_at = st.get("halted_at")
+                    logger.warning("restored persisted RISK HALT: %s", self._halt_reason)
+            except Exception as exc:
+                logger.error("failed to load persisted risk state: %s", exc)
 
     @property
     def halted(self) -> bool:
@@ -118,6 +137,11 @@ class RiskGate:
         self._halted = True
         self._halt_reason = reason
         self._halted_at = time.time()
+        if self._state_store is not None:
+            try:
+                self._state_store.set_halt(reason)
+            except Exception as exc:
+                logger.error("failed to persist halt state: %s", exc)
         logger.critical("RISK HALT: %s", reason)
 
     def clear_halt(self) -> None:
@@ -125,6 +149,11 @@ class RiskGate:
         self._halted = False
         self._halt_reason = ""
         self._halted_at = None
+        if self._state_store is not None:
+            try:
+                self._state_store.clear_halt()
+            except Exception as exc:
+                logger.error("failed to persist halt clear: %s", exc)
 
     def check(
         self,
@@ -187,21 +216,46 @@ class RiskGate:
                 limit=self.envelope.max_risk_per_trade,
             ))
 
-        # 4. Position fraction
+        # 4. Position fraction — mild overshoot (<= 1.5x) is scaled down
+        #    with a WARNING (v0.3: scaled_position_fraction is now actually
+        #    applied by callers); gross overshoot (> 1.5x) is an ERROR.
+        fraction_scale_applied = False
         if decision.position_fraction > self.envelope.max_position_fraction:
-            violations.append(RiskViolation(
-                rule="max_position_fraction",
-                severity=Severity.ERROR,
-                detail=(
-                    f"position fraction {decision.position_fraction:.2%} exceeds limit "
-                    f"{self.envelope.max_position_fraction:.2%}"
-                ),
-                proposed_value=decision.position_fraction,
-                limit=self.envelope.max_position_fraction,
-            ))
+            ratio = (
+                decision.position_fraction / self.envelope.max_position_fraction
+                if self.envelope.max_position_fraction > 0 else float("inf")
+            )
+            if ratio <= 1.5:
+                violations.append(RiskViolation(
+                    rule="max_position_fraction_scaled",
+                    severity=Severity.WARNING,
+                    detail=(
+                        f"position fraction {decision.position_fraction:.2%} scaled down to limit "
+                        f"{self.envelope.max_position_fraction:.2%}"
+                    ),
+                    proposed_value=decision.position_fraction,
+                    limit=self.envelope.max_position_fraction,
+                ))
+                fraction_scale_applied = True
+            else:
+                violations.append(RiskViolation(
+                    rule="max_position_fraction",
+                    severity=Severity.ERROR,
+                    detail=(
+                        f"position fraction {decision.position_fraction:.2%} exceeds limit "
+                        f"{self.envelope.max_position_fraction:.2%} by {ratio:.1f}x"
+                    ),
+                    proposed_value=decision.position_fraction,
+                    limit=self.envelope.max_position_fraction,
+                ))
 
-        # 5. Portfolio exposure (after this trade)
-        new_exposure = portfolio.positions_value / portfolio.equity + decision.position_fraction
+        # 5. Portfolio exposure (after this trade) — guard zero equity
+        #    (v0.3 fix: ZeroDivisionError when account fetch failed).
+        base_exposure = (
+            portfolio.positions_value / portfolio.equity
+            if portfolio.equity > 0 else 0.0
+        )
+        new_exposure = base_exposure + decision.position_fraction
         if new_exposure > self.envelope.max_portfolio_exposure:
             violations.append(RiskViolation(
                 rule="max_portfolio_exposure",
@@ -269,7 +323,7 @@ class RiskGate:
 
         # --- Warnings only: approve but scale position down if needed.
         scaled = decision.position_fraction
-        if decision.position_fraction > self.envelope.max_position_fraction:
+        if fraction_scale_applied:
             scaled = self.envelope.max_position_fraction
 
         # If we have a WARNING (e.g., sector concentration), log but approve.

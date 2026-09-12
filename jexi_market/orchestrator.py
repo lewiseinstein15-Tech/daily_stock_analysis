@@ -22,9 +22,11 @@ performance memory), and explicitly tracks which agents disagreed.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import time
 from dataclasses import dataclass, field
+from dataclasses import replace as dataclasses_replace
 from typing import Any, Dict, List, Optional, Tuple
 
 from jexi_market.agents import (
@@ -52,6 +54,7 @@ from jexi_market.indicators import FactorSnapshot, compute_factors
 from jexi_market.memory import PerformanceMemory
 from jexi_market.notifications import NtfyReporter
 from jexi_market.risk import PortfolioState, RiskGate
+from jexi_market.risk.state import RiskStateStore
 from jexi_market.execution import AlpacaClient
 
 logger = logging.getLogger(__name__)
@@ -103,12 +106,17 @@ class MarketBoss:
         news_adapter: Optional[Any] = None,
         sector_classifier: Optional[Any] = None,
         enable_enrichment: bool = True,
+        state_store: Optional[RiskStateStore] = None,
     ):
         self.config = config or MarketConfig()
         self.data_client = data_client or MarketDataClient()
         self.memory = memory or PerformanceMemory(self.config.memory_db_path)
         self.reporter = reporter or NtfyReporter(self.config)
-        self.risk_gate = risk_gate or RiskGate(RiskEnvelope(**self.config.risk_envelope_kwargs))
+        self.state_store = state_store or RiskStateStore(self.config.state_db_path)
+        self.risk_gate = risk_gate or RiskGate(
+            RiskEnvelope(**self.config.risk_envelope_kwargs),
+            state_store=self.state_store,
+        )
         self.alpaca = alpaca or AlpacaClient(self.config)
         self.agents = agents or build_all_agents(self.config)
         # Leadership agents
@@ -212,6 +220,12 @@ class MarketBoss:
 
             # 5. Run every specialist agent (skip leadership agents —
             #    aldric/vic have review()/plan() interfaces, not analyze()).
+            #    v0.3 fix: the adaptive weight from performance memory is
+            #    actually APPLIED — it scales each agent's agreement
+            #    (clamped to [0.5, 1.5] by memory.agent_weight), so
+            #    historically-accurate agents genuinely influence the
+            #    consensus more.  Previously the weight was computed and
+            #    discarded (a no-op).
             recommendations: List[Recommendation] = []
             for agent_id, agent in self.agents.items():
                 if agent.kind in (AgentKind.BOSS, AgentKind.ADVISOR, AgentKind.EXECUTION):
@@ -219,10 +233,17 @@ class MarketBoss:
                 try:
                     rec = agent.analyze(snapshot, factors, ctx)
                     if rec is not None:
-                        # Apply adaptive weight from performance memory
                         weight = self.memory.agent_weight(agent_id)
-                        # The weight scales the confidence's evidence_count
-                        # (more past calls -> more confidence in the agent)
+                        if abs(weight - 1.0) > 1e-9:
+                            scaled_agreement = max(0.0, min(1.0, rec.confidence.agreement * weight))
+                            weighted_conf = dataclasses_replace(
+                                rec.confidence, agreement=scaled_agreement
+                            )
+                            rec = dataclasses_replace(rec, confidence=weighted_conf)
+                            logger.debug(
+                                "agent %s weight %.2f applied (agreement %.3f -> %.3f)",
+                                agent_id, weight, rec.confidence.agreement, scaled_agreement,
+                            )
                         recommendations.append(rec)
                 except Exception as exc:
                     logger.warning("agent %s failed on %s: %s", agent_id, symbol, exc)
@@ -253,23 +274,33 @@ class MarketBoss:
                 object.__setattr__(decision, "stop_loss", plan.stop_loss if plan.stop_loss else decision.stop_loss)
                 object.__setattr__(decision, "take_profit", plan.take_profit if plan.take_profit else decision.take_profit)
 
-            # 9. Risk gate — pass the real sector (from yfinance) so the
-            #    sector-concentration check actually works.
+            # 9. Risk gate — v0.3 fix: the gate now evaluates the REAL
+            #    portfolio (broker account + positions + persisted peak
+            #    equity / daily P&L) instead of a hardcoded fake 100k
+            #    snapshot, which made the exposure / daily-loss /
+            #    drawdown / sector checks inert in practice.
             sector = research_cache.get(f"sector:{symbol}") if isinstance(research_cache, dict) else None
-            portfolio_state = PortfolioState(
-                equity=100_000.0,
-                cash=100_000.0,
-                positions_value=0.0,
-                open_positions=0,
-                paper_trading_days=self.memory.paper_trading_days(),
-                peak_equity=100_000.0,
-            )
+            portfolio_state = self._build_portfolio_state(sector, symbol=symbol)
             gate_result = self.risk_gate.check(decision, portfolio_state, sector=sector)
             result.gate_approved = gate_result.approved
             result.gate_violations = [v.to_dict() for v in gate_result.violations]
+            # Apply the gate's scaled position fraction (mild overshoots
+            # are scaled down instead of silently passing).
+            if (
+                gate_result.approved
+                and gate_result.scaled_position_fraction is not None
+                and decision.position_fraction > 0
+            ):
+                object.__setattr__(
+                    decision, "position_fraction", gate_result.scaled_position_fraction
+                )
 
-            # 10. Record decision in memory
-            self.memory.record_decision(decision, regime=regime_enum.value)
+            # 10. Record decision in memory — v0.3 fix: ONLY non-FLAT
+            #     decisions are recorded as trades.  Recording FLAT
+            #     analyses polluted paper_trading_days() and let 30 days
+            #     of neutral scans unlock live trading with zero trades.
+            if decision.direction != SignalDirection.FLAT:
+                self.memory.record_decision(decision, regime=regime_enum.value)
 
             # 11. Render and publish report
             report_text = self.reporter.render_report(
@@ -303,6 +334,64 @@ class MarketBoss:
     # ------------------------------------------------------------------
     def run(self, symbols: List[str], *, days: int = 120) -> List[RunResult]:
         return [self.analyze_symbol(s, days=days) for s in symbols]
+
+    # ------------------------------------------------------------------
+    # Real portfolio state (v0.3)
+    # ------------------------------------------------------------------
+    def _build_portfolio_state(self, sector: Optional[str], *, symbol: str) -> PortfolioState:
+        """Build the gate's PortfolioState from REAL broker data.
+
+        Uses the Alpaca account/positions when configured; otherwise a
+        conservative in-memory view (equity = peak or default) with the
+        persisted peak equity / daily P&L from the risk state store.
+        """
+        equity = 0.0
+        cash = 0.0
+        positions_value = 0.0
+        open_positions = 0
+        sector_exposure: Dict[str, float] = {}
+
+        if self.alpaca.configured:
+            try:
+                acct = self.alpaca.get_account()
+                equity = acct.equity
+                cash = acct.cash
+                positions = self.alpaca.get_positions()
+                open_positions = len(positions)
+                positions_value = sum(p.market_value for p in positions)
+                # Sector exposure from the classifier cache (per-symbol
+                # lookup is too slow here; the current symbol's sector is
+                # what the gate actually checks against).
+                if sector and equity > 0:
+                    held_for_symbol = sum(
+                        p.market_value for p in positions if p.symbol == symbol
+                    )
+                    sector_exposure[sector] = held_for_symbol / equity
+            except Exception as exc:
+                logger.warning("real portfolio state unavailable (%s) — using memory view", exc)
+
+        persisted = self.state_store.load()
+        if equity <= 0:
+            equity = float(persisted.get("peak_equity") or 0.0) or 100_000.0
+            cash = equity - positions_value
+        peak = float(persisted.get("peak_equity") or 0.0)
+        if equity > peak:
+            self.state_store.update_equity(equity)
+            peak = equity
+        day_start = float(persisted.get("day_start_equity") or 0.0)
+        daily_pnl = (equity - day_start) if day_start > 0 else 0.0
+
+        return PortfolioState(
+            equity=equity,
+            cash=max(0.0, cash),
+            positions_value=positions_value,
+            open_positions=open_positions,
+            sector_exposure=sector_exposure,
+            daily_pnl=daily_pnl,
+            peak_equity=peak,
+            paper_trading_days=self.memory.paper_trading_days(),
+            live_trading_active=bool(self.config.live_trading_enabled),
+        )
 
     # ------------------------------------------------------------------
     # Decision synthesis

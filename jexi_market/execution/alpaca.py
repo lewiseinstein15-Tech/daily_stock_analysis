@@ -41,6 +41,19 @@ DEFAULT_TRADING_URL_LIVE = "https://api.alpaca.markets"
 DEFAULT_DATA_URL = "https://data.alpaca.markets"
 
 
+def _format_qty(qty: float) -> str:
+    """Format a quantity the way Alpaca's v2 API accepts.
+
+    Whole numbers are sent as integers; fractional quantities are
+    rounded to 2dp and stripped of trailing zeros (full-precision
+    floats like ``13.233333333333334`` get rejected with HTTP 422).
+    """
+    q = round(max(0.0, float(qty)), 2)
+    if abs(q - round(q)) < 1e-9:
+        return str(int(round(q)))
+    return f"{q:.2f}".rstrip("0").rstrip(".")
+
+
 @dataclass
 class AccountInfo:
     """Snapshot of the Alpaca account."""
@@ -265,17 +278,20 @@ class AlpacaClient:
         *,
         order_type: str = "market",
         time_in_force: str = "day",
+        limit_price: Optional[float] = None,
     ) -> Order:
         """Submit an order.  Raises on HTTP failure; returns parsed Order."""
         if not self.configured:
             raise RuntimeError("Alpaca credentials not configured")
         body = {
             "symbol": symbol,
-            "qty": str(qty),
+            "qty": _format_qty(qty),
             "side": side,
             "type": order_type,
             "time_in_force": time_in_force,
         }
+        if limit_price is not None:
+            body["limit_price"] = f"{round(limit_price, 2)}"
         data = self._post("/v2/orders", body)
         return Order(
             id=str(data.get("id", "")),
@@ -378,6 +394,13 @@ class AlpacaClient:
         Position sizing is delegated to the risk gate's
         ``position_fraction`` (already capped).  We compute qty from
         fraction × equity / latest_price.
+
+        v0.3 fixes:
+          * LONG-ONLY policy — a SHORT decision with no held long is
+            refused instead of silently opening a naked short.
+          * A SHORT decision whose qty exceeds the held long is clamped
+            to the held qty (a close, never an over-sell).
+          * qty is rounded to a broker-safe precision string.
         """
         if not self.configured:
             raise RuntimeError("Alpaca credentials not configured — cannot execute")
@@ -392,16 +415,30 @@ class AlpacaClient:
         if not self._paper and not self.config.live_trading_enabled:
             raise RuntimeError("live trading not enabled")
 
-        # Double-sell guard: refuse to sell if we don't hold the position.
-        if decision.direction == SignalDirection.SHORT:
-            positions = {p.symbol: p for p in self.get_positions()}
-            held = positions.get(decision.symbol)
-            if held and held.side == "long" and held.qty > 0:
-                # Closing a long is allowed; opening a new short is not.
-                logger.info("closing long position in %s (qty %s)", decision.symbol, held.qty)
-
         dollar_allocation = portfolio_equity * decision.position_fraction
         qty = max(0.0, dollar_allocation / latest_price)
+
+        if decision.direction == SignalDirection.SHORT:
+            # Long-only policy: we may only SELL what we actually hold.
+            positions = {p.symbol: p for p in self.get_positions()}
+            held = positions.get(decision.symbol)
+            held_qty = (
+                held.qty
+                if (held and held.side == "long" and held.qty > 0)
+                else 0.0
+            )
+            if held_qty <= 0:
+                raise ValueError(
+                    f"long-only policy: SHORT decision for {decision.symbol} "
+                    "refused — no long position held (naked shorts disabled)"
+                )
+            if qty > held_qty:
+                logger.info(
+                    "clamping sell qty %.4f -> %.4f (held long only) for %s",
+                    qty, held_qty, decision.symbol,
+                )
+                qty = held_qty
+
         if qty <= 0:
             raise ValueError("computed qty <= 0 — nothing to order")
 
