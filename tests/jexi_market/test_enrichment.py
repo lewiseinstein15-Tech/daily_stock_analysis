@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 """Tests for the enrichment adapters (fundamentals, news, sector)."""
 
+import importlib.util
 from unittest.mock import patch, MagicMock
+
+import pytest
 
 from jexi_market.enrichment import (
     FundamentalAdapter,
@@ -9,6 +12,15 @@ from jexi_market.enrichment import (
     NewsAdapter,
     NewsSnapshot,
     SectorClassifier,
+)
+
+
+# Tests below that mock ``yfinance.Ticker`` require the optional yfinance
+# dependency to be importable.  Skip them cleanly in zero-config environments
+# where it is not installed, instead of failing with a confusing error.
+requires_yfinance = pytest.mark.skipif(
+    importlib.util.find_spec("yfinance") is None,
+    reason="yfinance is not installed (optional dependency)",
 )
 
 
@@ -39,6 +51,7 @@ def test_fundamental_adapter_returns_none_when_yfinance_missing():
     assert "not installed" in (fund.error or "") or "simulated" in (fund.error or "")
 
 
+@requires_yfinance
 def test_fundamental_adapter_parses_yfinance_info():
     adapter = FundamentalAdapter()
     mock_info = {
@@ -73,6 +86,7 @@ def test_fundamental_adapter_parses_yfinance_info():
     assert fund.industry == "Consumer Electronics"
 
 
+@requires_yfinance
 def test_fundamental_adapter_handles_empty_info():
     adapter = FundamentalAdapter()
     mock_ticker = MagicMock()
@@ -103,6 +117,7 @@ def test_news_adapter_returns_none_when_yfinance_missing():
     assert "not installed" in (snap.error or "") or "simulated" in (snap.error or "")
 
 
+@requires_yfinance
 def test_news_adapter_parses_yfinance_news():
     adapter = NewsAdapter()
     mock_news = [
@@ -150,6 +165,7 @@ def test_news_adapter_parses_yfinance_news():
     assert snap.sentiment_score > 0
 
 
+@requires_yfinance
 def test_news_adapter_handles_empty_news():
     adapter = NewsAdapter()
     mock_ticker = MagicMock()
