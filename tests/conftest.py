@@ -144,6 +144,11 @@ _asyncio.AsyncIOBackend.run_async_from_thread = classmethod(_run_async_from_thre
 class _ThreadlessTestClient:
     """Small TestClient replacement that avoids AnyIO's cross-thread portal."""
 
+    # Tests import this class (possibly rebound as ``TestClient``); keep pytest
+    # from trying to collect it as a test class and emitting a
+    # ``PytestCollectionWarning``.
+    __test__ = False
+
     def __init__(
         self,
         app,
