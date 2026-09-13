@@ -131,6 +131,14 @@ WEB_SETTINGS_HIDDEN_FROM_UI = {
     "MT5_SERVER",
     # Paper broker starting balance
     "JEXI_PAPER_STARTING_CASH",
+    # v0.4 — opportunity watch loop + plain-English notifications
+    "JEXI_WATCH_INTERVAL",
+    "JEXI_NOTIFY_TRIGGERS",
+    "JEXI_NOTIFY_DAILY_PLAN",
+    "JEXI_TRIGGER_MIN_PRIORITY",
+    "JEXI_PLAIN_ENGLISH",
+    "JEXI_MCP_ENABLED",
+    "JEXI_MCP_SERVERS",
 }
 
 _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {

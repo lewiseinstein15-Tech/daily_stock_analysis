@@ -80,16 +80,26 @@ class ToolRegistry:
         return tool.call(arguments)
 
     def register_mcp(self, mcp_client: Any) -> None:
-        """Register tools from an MCP client (src.jexi.mcp_client).
+        """Register tools from an MCP client (jexi_market.mcp.McpStdioClient
+        or any duck-typed equivalent).
 
-        Each MCP tool is exposed under its name; calls are forwarded
-        to the MCP client's ``call_tool`` method.
+        Each MCP tool is exposed under ``mcp.<name>``; calls are
+        forwarded to the MCP client's ``call_tool`` method.  Accepts
+        either a list of tool-name strings (legacy) or MCP tool
+        descriptors (``{"name": ...}`` dicts) from ``tools/list``.
         """
         if not hasattr(mcp_client, "list_tools"):
             logger.warning("MCP client missing list_tools; skipping")
             return
         try:
-            for tool_name in mcp_client.list_tools():
+            for entry in mcp_client.list_tools():
+                if isinstance(entry, dict):
+                    tool_name = str(entry.get("name") or "")
+                else:
+                    tool_name = str(entry)
+                if not tool_name:
+                    continue
+
                 def make_fn(tn):
                     def fn(args):
                         return mcp_client.call_tool(tn, args)

@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [新功能] **JEXI Market v0.4 — 机会驱动交易 + 大白话通知**：
+  - **TriggerEngine**（`triggers.py`）：便宜地监视整个股票池，只在真实机会出现时才唤醒昂贵的 agent 管线 — breakout_proximity（带"正在涨向高点"校验，横盘市场永不误报）、momentum_burst（放量急涨/急跌）、oversold_bounce（RSI 超卖回升）、overbought_fade、volatility_squeeze（布林带收口）、trend_pullback（上升趋势回踩 SMA20）、volume_spike、gap_event，以及持仓出场时机（near_stop / near_target，多空双向）。每事件自带英文白话句子 + (symbol, kind) 2 小时冷却防重复。
+  - **OpportunityRunner**（`watch.py`）：`jexi-market watch` — 事件驱动循环：监视 → 触发 → 只对触发品种做深度分析 → 过风险/信心闸门后经 OrderLifecycleManager 下单（broker 端 bracket 止损止盈）→ ntfy 白话通知；每日首个循环播报账户计划；数据连续失败同样触发看门狗熔断；`--once` 适配 CI/cron。
+  - **plain_english.py**：全部通知经白话翻译层（含 jargon 黑名单，测试强制：不出现 long/short/RSI/MACD/position 等术语），带真实美元金额、安全网价格、目标价与"接下来会发生什么"。
+  - **AccountPlanner**（`planner.py`）：每日从**真实券商账户** + 绩效记忆构建当日计划 — 可用现金、最多开几个新仓、单笔美元风险预算（风险信封）、当日剩余亏损预算、近期"有效"的 agent/策略（accuracy≥55% 且 n≥5 且盈利为正）、持仓警戒清单。
+  - **券商自动识别**（`brokers/factory.py`）：`JEXI_BROKER=auto`（新默认）按环境变量凭据自动选择 Alpaca → Binance → Pocket Option → MT5 → paper，任何市场只需在 git secrets / .env 放对应 key，无需改代码。
+  - **MCP 客户端**（`mcp.py`）：自包含 MCP（Model Context Protocol）stdio 客户端（JSON-RPC 2.0 + Content-Length 帧，零 SDK 依赖），`JEXI_MCP_SERVERS` 声明的外部 MCP 工具自动注册进 agent 工具注册表（`mcp.<tool>`），坏服务器跳过不致命；`ToolRegistry.register_mcp` 同时兼容字符串与 tools/list 描述符。
+  - **GitHub Actions**（`.github/workflows/jexi-watch.yml`）：美股时段每 15 分钟跑一轮 `watch --once`，secrets 直接映射为 broker/ntfy 凭据。
+  - CLI 新增 `watch` / `plan` / `notify`；config 新增 `JEXI_WATCH_INTERVAL` / `JEXI_TRIGGER_MIN_PRIORITY` / `JEXI_NOTIFY_TRIGGERS` / `JEXI_NOTIFY_DAILY_PLAN` / `JEXI_PLAIN_ENGLISH`；+35 项 v0.4 测试（触发器、白话层、计划器、auto 识别、MCP 全握手、watch 循环熔断/执行/出场）。
 - [修复] **v0.3.1 全仓测试清零（61→0 失败，套件 7068 通过）**：
   - `requirements.txt` 中文注释含非 ASCII 破折号触发 `test_requirements_file_is_ascii_decodable` 编码门禁 — 改为 ASCII 连字符。
   - v0.3 新增的 43 个 `.env.example` 键（JEXI_*、券商凭据、Telegram 控制）未登记到 web 配置注册表，导致 `TestEnvExampleWebSettingsCoverage` 失败 — 全部加入 `WEB_SETTINGS_HIDDEN_FROM_UI`（运行时/凭据类密钥本就不应出现在 web UI 中）。

@@ -61,7 +61,54 @@ trading system.** The package ships real:
 
 ---
 
-## v0.3 — 24/7 Autonomous Trading (NEW)
+## v0.4 — Opportunity-Driven Trading + Plain-English (NEW)
+
+v0.4 makes JEXI trade **at the right time, not at a set time** — and
+speak **plain English** while doing it:
+
+**Trades at the RIGHT time (`jexi-market watch`):** a cheap TriggerEngine
+watches the whole universe every cycle and only wakes the expensive
+agent pipeline when a real opportunity fires — breakout proximity (with
+a rising check so flat markets never false-fire), momentum bursts on
+heavy volume, oversold bounces (RSI turning up), overbought fades,
+volatility squeezes, trend pullbacks, volume spikes, gap events and
+*exit timing* for held positions (near stop / near target). Cooldowns
+stop the same setup from re-firing. All deterministic — zero LLM.
+
+**Plain English, not jargon:** every ntfy message goes through a
+translation layer with a jargon blocklist enforced by tests:
+
+> *"I bought a small piece of AAPL at about $332.27. I put $10,000 of
+> your money into this. (fairly sure — 78%) Why: Price has been climbing
+> steadily for two weeks. Safety net: if it falls to $320.21 I sell
+> automatically, so the most you can lose here is small. Goal: if it
+> reaches $356.40 I sell and lock in the profit."*
+
+**Checks your account, then plans:** every morning the AccountPlanner
+reads the real broker account + performance memory and announces the
+day's plan — deployable cash, max new positions, dollar risk budget,
+daily loss budget left, and which setups have actually been working.
+
+**Any market via git secrets:** `JEXI_BROKER=auto` (now the default)
+detects whichever broker credentials exist in the environment — Alpaca,
+Binance, Pocket Option, MT5 — so pointing JEXI at a new market is just
+adding secrets. `.github/workflows/jexi-watch.yml` runs one watch cycle
+every 15 minutes during US market hours straight from GitHub secrets.
+
+**Agents + MCP:** tools from any MCP (Model Context Protocol) server
+declared in `JEXI_MCP_SERVERS` surface automatically in the agent tool
+registry as `mcp.<tool>`; dead servers are skipped, never fatal.
+
+```bash
+python -m jexi_market watch          # opportunity-driven live loop
+python -m jexi_market watch --once   # one cycle (CI / cron)
+python -m jexi_market plan           # today's plan in plain English
+python -m jexi_market notify         # test your ntfy connection
+```
+
+---
+
+## v0.3 — 24/7 Autonomous Trading
 
 v0.3 turns JEXI Market from a paper-trading pilot into a **24/7-ready
 autonomous trading system**, borrowing the proven patterns from

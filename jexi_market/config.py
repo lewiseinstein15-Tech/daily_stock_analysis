@@ -103,8 +103,10 @@ class MarketConfig:
     )
 
     # --- v0.3: broker selection ---------------------------------------------
-    # One of: alpaca | paper | binance | pocketoption | mt5
-    broker: str = field(default_factory=lambda: os.getenv("JEXI_BROKER", "alpaca").lower())
+    # "auto" (v0.4 default) detects whichever broker's credentials are in
+    # the environment.  One of: auto | alpaca | paper | binance |
+    # pocketoption | mt5
+    broker: str = field(default_factory=lambda: os.getenv("JEXI_BROKER", "auto").lower())
 
     # --- v0.3: trade gating -------------------------------------------------
     # Only execute decisions whose structural confidence >= threshold.
@@ -134,6 +136,21 @@ class MarketConfig:
     # --- v0.3: Binance --------------------------------------------------------
     # Keys are read directly by the adapter (BINANCE_API_KEY / SECRET /
     # BINANCE_TESTNET) — nothing duplicated here on purpose.
+
+    # --- v0.4: opportunity-driven watch loop --------------------------------
+    # Seconds between cheap universe watches (the expensive agent pipeline
+    # only wakes when a trigger fires).  0 disables the loop's own pacing.
+    watch_interval_seconds: int = field(default_factory=lambda: _env_int("JEXI_WATCH_INTERVAL", 120))
+    # Send plain-English ntfy messages for every trigger (can be noisy; the
+    # trigger cooldown already throttles).
+    notify_triggers: bool = field(default_factory=lambda: _env_bool("JEXI_NOTIFY_TRIGGERS", True))
+    # Send a plain-English morning plan (account + today's budget) once/day.
+    notify_daily_plan: bool = field(default_factory=lambda: _env_bool("JEXI_NOTIFY_DAILY_PLAN", True))
+    # Only run the expensive pipeline for triggers at/above this priority (1-5).
+    trigger_min_priority: int = field(default_factory=lambda: _env_int("JEXI_TRIGGER_MIN_PRIORITY", 2))
+
+    # --- v0.4: plain-English notifications -----------------------------------
+    plain_english: bool = field(default_factory=lambda: _env_bool("JEXI_PLAIN_ENGLISH", True))
 
     # --- Research backend --------------------------------------------------
     # Reuses src.jexi.research infrastructure: "auto" | "opencode_cli" |
@@ -205,6 +222,12 @@ class MarketConfig:
             "asset_class": self.asset_class,
             "trade_247": self.trade_247,
             "telegram_enabled": bool(self.telegram_bot_token),
+            # v0.4
+            "watch_interval_seconds": self.watch_interval_seconds,
+            "notify_triggers": self.notify_triggers,
+            "notify_daily_plan": self.notify_daily_plan,
+            "trigger_min_priority": self.trigger_min_priority,
+            "plain_english": self.plain_english,
         }
 
 

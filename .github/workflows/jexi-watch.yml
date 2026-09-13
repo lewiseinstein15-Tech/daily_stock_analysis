@@ -1,0 +1,77 @@
+# JEXI Market v0.4 — opportunity-driven watcher on GitHub Actions.
+#
+# JEXI watches the market for GOOD MOMENTS (breakouts, momentum bursts,
+# oversold bounces, squeezes, gaps) and only wakes the full analysis
+# pipeline when one fires — then it sends PLAIN-ENGLISH notifications
+# to your ntfy app.
+#
+# Setup (repo Settings -> Secrets and variables -> Actions):
+#   Any ONE of these broker credential sets (JEXI auto-detects it):
+#     ALPACA_API_KEY, ALPACA_API_SECRET      -> Alpaca (paper or live)
+#     BINANCE_API_KEY, BINANCE_API_SECRET    -> Binance spot
+#     POCKET_OPTION_SSID                     -> Pocket Option (demo first!)
+#     MT5_LOGIN, MT5_PASSWORD, MT5_SERVER    -> MetaTrader 5 bridge
+#   And for notifications:
+#     NTFY_TOKEN                              (optional, if topic is protected)
+#   Optional knobs (all have safe defaults):
+#     JEXI_BROKER            force a broker (auto | alpaca | binance | ...)
+#     JEXI_SCANNER_UNIVERSE  comma-separated symbols to watch
+#     JEXI_MIN_CONFIDENCE    trade only when this sure (0..1)
+#     JEXI_WATCH_INTERVAL    seconds between watches (long-running mode)
+#
+# NOTE: GitHub Actions cron is UTC and can drift by several minutes.
+# The watcher itself is market-hours aware and safe to run more often
+# than needed (cooldowns prevent repeat firing).
+
+name: jexi-watch
+
+on:
+  schedule:
+    # US equity session weekdays 13:30-20:00 UTC = 9:30-16:00 ET.
+    - cron: "*/15 13-19 * * 1-5"
+  workflow_dispatch: {}   # manual runs from the Actions tab
+
+concurrency:
+  group: jexi-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      JEXI_BROKER: ${{ secrets.JEXI_BROKER || 'auto' }}
+      ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+      ALPACA_API_SECRET: ${{ secrets.ALPACA_API_SECRET }}
+      ALPACA_ENV: ${{ secrets.ALPACA_ENV || 'paper' }}
+      BINANCE_API_KEY: ${{ secrets.BINANCE_API_KEY }}
+      BINANCE_API_SECRET: ${{ secrets.BINANCE_API_SECRET }}
+      POCKET_OPTION_SSID: ${{ secrets.POCKET_OPTION_SSID }}
+      MT5_LOGIN: ${{ secrets.MT5_LOGIN }}
+      MT5_PASSWORD: ${{ secrets.MT5_PASSWORD }}
+      MT5_SERVER: ${{ secrets.MT5_SERVER }}
+      NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+      JEXI_MARKET_NTFY_TOPIC: ${{ secrets.JEXI_MARKET_NTFY_TOPIC || 'jexi_market_reports' }}
+      JEXI_SCANNER_UNIVERSE: ${{ secrets.JEXI_SCANNER_UNIVERSE || 'AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,SPY,QQQ' }}
+      JEXI_MIN_CONFIDENCE: ${{ secrets.JEXI_MIN_CONFIDENCE || '0.55' }}
+      JEXI_WATCH_INTERVAL: "120"
+      JEXI_LIVE_TRADING_ENABLED: ${{ secrets.JEXI_LIVE_TRADING_ENABLED || '0' }}
+      JEXI_PLAIN_ENGLISH: "1"
+      JEXI_NOTIFY_TRIGGERS: "1"
+      JEXI_NOTIFY_DAILY_PLAN: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run one opportunity watch (trigger -> analyze -> trade -> notify)
+        run: |
+          python -m jexi_market watch --once --no-telegram

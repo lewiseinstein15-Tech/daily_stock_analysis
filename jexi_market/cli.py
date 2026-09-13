@@ -424,6 +424,106 @@ def cmd_telegram(args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# v0.4: opportunity-driven watch loop + plain-English helper commands
+# ---------------------------------------------------------------------------
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    """Run the opportunity-driven watch loop (trades at the RIGHT time)."""
+    from jexi_market.watch import OpportunityRunner
+    config = get_config()
+    runner = OpportunityRunner(config, enable_telegram=not args.no_telegram)
+    if args.once:
+        import json as _json
+        result = runner.watch_once()
+        print(_json.dumps(result, indent=2, default=str))
+        return 0
+    print("""
+  ================ JEXI OPPORTUNITY WATCHER ================
+  broker           : {broker}
+  paper mode       : {paper}
+  universe         : {n} symbols ({universe})
+  watch interval   : {interval}s (triggers wake the brain)
+  min confidence   : {conf:.0%}
+  plain english    : {plain}
+  ntfy             : {ntfy}
+  telegram         : {tg}
+===========================================================""".format(
+        broker=runner.broker.name,
+        paper=runner.broker.paper,
+        n=len(config.scanner_symbols),
+        universe=",".join(config.scanner_symbols[:6]) + ("..." if len(config.scanner_symbols) > 6 else ""),
+        interval=config.watch_interval_seconds,
+        conf=config.min_confidence,
+        plain="on" if config.plain_english else "off",
+        ntfy=runner.reporter.endpoint or "offline (stdout)",
+        tg="on" if runner._telegram else "off",
+    ))
+    runner.watch_forever()
+    return 0
+
+
+def cmd_plan(args: argparse.Namespace) -> int:
+    """Build today's plan from the real account and show it (plain English)."""
+    from jexi_market.planner import AccountPlanner
+    from jexi_market.plain_english import translate_account_summary, translate_plan
+    from jexi_market.brokers import build_broker
+    from jexi_market.memory import PerformanceMemory
+    from jexi_market.risk.state import RiskStateStore
+    config = get_config()
+    broker = build_broker(config)
+    planner = AccountPlanner(
+        config,
+        broker=broker,
+        memory=PerformanceMemory(config.memory_db_path),
+        state_store=RiskStateStore(config.state_db_path),
+    )
+    plan = planner.build()
+    if args.json:
+        import json as _json
+        print(_json.dumps(plan.to_dict(), indent=2, default=str))
+        return 0
+    print(translate_account_summary(
+        broker_name=plan.broker_name,
+        equity=plan.equity,
+        cash=plan.cash,
+        n_positions=plan.n_positions,
+        open_profit=plan.open_profit,
+        paper=plan.paper,
+    ))
+    print()
+    print(translate_plan(
+        equity=plan.equity,
+        cash=plan.cash,
+        max_new_positions=plan.max_new_positions,
+        risk_per_trade_amount=plan.risk_per_trade_amount,
+        daily_budget_left=plan.daily_budget_left,
+        watch_out=plan.watch_out,
+        notes=plan.notes,
+    ))
+    return 0
+
+
+def cmd_notify(args: argparse.Namespace) -> int:
+    """Send a plain-English test message to your ntfy app."""
+    from jexi_market.notifications.reporter import NtfyReporter
+    reporter = NtfyReporter(get_config())
+    ok = reporter.publish(
+        "JEXI is connected to your phone",
+        (
+            "This is what my messages will look like — short, in everyday "
+            "English, with the real dollar amounts. When I spot a good "
+            "moment, make a trade, or need your attention, it will show up "
+            "here exactly like this."
+        ),
+        priority="high",
+        tags=["wave"],
+    )
+    endpoint = reporter.endpoint or "(offline)"
+    print(f"{'sent' if ok else 'offline/failed'} -> {endpoint}")
+    return 0 if ok else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="jexi-market",
@@ -528,6 +628,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_tg = sub.add_parser("telegram", help="Run only the Telegram control loop (foreground)")
     p_tg.set_defaults(func=cmd_telegram)
+
+    # ---- v0.4: opportunity-driven watch + plain-English helpers ----
+    p_watch = sub.add_parser("watch", help="Watch markets and trade at the RIGHT time (opportunity-driven)")
+    p_watch.add_argument("--once", action="store_true", help="One watch cycle then exit (CI / cron mode)")
+    p_watch.add_argument("--no-telegram", action="store_true", help="Disable the Telegram controller")
+    p_watch.set_defaults(func=cmd_watch)
+
+    p_plan = sub.add_parser("plan", help="Show today's plan built from your real account (plain English)")
+    p_plan.add_argument("--json", action="store_true", help="Emit the structured plan")
+    p_plan.set_defaults(func=cmd_plan)
+
+    p_notify = sub.add_parser("notify", help="Send a plain-English test message to your ntfy app")
+    p_notify.set_defaults(func=cmd_notify)
     return parser
 
 
