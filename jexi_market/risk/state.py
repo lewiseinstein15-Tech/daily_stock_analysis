@@ -98,6 +98,17 @@ class RiskStateStore:
         return self._get("paused", "0") == "1"
 
     # ------------------------------------------------------------------
+    # Generic key/value (public wrappers for operational flags)
+    # ------------------------------------------------------------------
+    def get_kv(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Read a persistent operational flag (survives restarts)."""
+        return self._get(key, default)
+
+    def set_kv(self, key: str, value: Any) -> None:
+        """Persist an operational flag (e.g. last_plan_date)."""
+        self._set(key, str(value))
+
+    # ------------------------------------------------------------------
     # Equity tracking (peak + daily loss accounting)
     # ------------------------------------------------------------------
     def update_equity(self, equity: float) -> Dict[str, Any]:

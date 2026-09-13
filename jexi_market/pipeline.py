@@ -116,7 +116,9 @@ class DecisionPipeline:
         audit: Optional[AuditLog] = None,
     ):
         self.config = config or MarketConfig()
-        self.boss = boss or MarketBoss(self.config, state_store=state_store)
+        # v0.4.1: hand the ACTIVE broker to the orchestrator so the risk
+        # gate's portfolio view reflects real exposure on every adapter.
+        self.boss = boss or MarketBoss(self.config, state_store=state_store, broker=broker)
         self.scanner = scanner or MarketScanner(MarketDataClient())
         self.alpaca = alpaca or AlpacaClient(self.config)
         self.memory = memory or self.boss.memory

@@ -122,6 +122,12 @@ class OpportunityRunner:
             self.config, broker=self.broker, memory=self.memory, state_store=self.state
         )
         self.stats = WatchStats()
+        # v0.4.1: persist the "morning plan already sent" flag so a
+        # restart does not re-send the same plan (and never skips it).
+        try:
+            self.stats.last_plan_date = self.state.get_kv("last_plan_date", "") or ""
+        except Exception:
+            self.stats.last_plan_date = ""
         self._stop = threading.Event()
 
         self._telegram = None
@@ -172,9 +178,17 @@ class OpportunityRunner:
             return None
         if not self.config.notify_daily_plan:
             self.stats.last_plan_date = today
+            try:
+                self.state.set_kv("last_plan_date", today)
+            except Exception:
+                pass
             return None
         plan = self.planner.build()
         self.stats.last_plan_date = today
+        try:
+            self.state.set_kv("last_plan_date", today)
+        except Exception:
+            pass
         account_line = (
             f"Account: ${plan.equity:,.2f} total, ${plan.cash:,.2f} ready to invest, "
             f"{plan.n_positions} open."
@@ -233,6 +247,30 @@ class OpportunityRunner:
         # 3. triggers
         universe = self.config.scanner_symbols
         events = self.triggers.evaluate_universe(universe, open_trades=open_trades)
+        # v0.4.1: data-failure budget — a watcher that cannot see ANY
+        # market must not pretend everything is quiet.  If every symbol
+        # in the universe came back unusable, treat it like a crashed
+        # cycle so the watchdog halt (and its emergency ntfy) trips.
+        failed = int(getattr(self.triggers, "last_scan_failures", 0) or 0)
+        if universe and failed >= len(universe):
+            self.audit.event("data_outage", symbols=len(universe), consecutive_failures=self.stats.consecutive_failures)
+            raise RuntimeError(
+                f"market data unavailable for all {len(universe)} universe symbols "
+                f"(data-failure budget {self.stats.consecutive_failures + 1}/"
+                f"{self.config.max_consecutive_failures})"
+            )
+        # v0.4.1: one position per symbol — never re-enter a market we
+        # already hold (pyramiding without limit was possible before).
+        # Exit-timing triggers (near_stop / near_target) stay live.
+        exit_kinds = {"near_stop", "near_target"}
+        kept: List[TriggerEvent] = []
+        for ev in events:
+            if ev.symbol in open_trades and ev.kind not in exit_kinds:
+                self.audit.event("trigger_suppressed", symbol=ev.symbol,
+                                 trigger_kind=ev.kind, reason="position already open")
+                continue
+            kept.append(ev)
+        events = kept
         self.stats.triggers_fired += len(events)
         for ev in events:
             self.audit.event("trigger", trigger=ev.to_dict())
@@ -266,6 +304,11 @@ class OpportunityRunner:
     def _deep_dive(self, ev: TriggerEvent) -> Dict[str, Any]:
         """Full agent pipeline on one triggered symbol + gated execution."""
         self.stats.pipeline_runs += 1
+        # v0.4.1: one position per symbol — a trigger on a market we
+        # already hold (e.g. near_target) must never open a second order.
+        if ev.symbol in self._open_trades_by_symbol():
+            return {"symbol": ev.symbol, "outcome": "already_held",
+                    "reason": "one position per symbol"}
         try:
             result = self.pipeline.boss.analyze_symbol(ev.symbol, days=self.config.scanner_lookback_days)
         except Exception as exc:
@@ -293,6 +336,13 @@ class OpportunityRunner:
         price = decision.entry or ev.price or 0.0
         if price <= 0:
             return {"symbol": ev.symbol, "outcome": "no_price"}
+        # v0.4.1: give the simulator the exact price this decision was
+        # made on, so paper fills never stall for lack of a quote.
+        if hasattr(self.broker, "seed_price"):
+            try:
+                self.broker.seed_price(ev.symbol, price)
+            except Exception:
+                pass
         outcome = self.lifecycle.open_position(
             decision, equity, price, paper_mode=self.broker.paper)
         title, body = translate_decision(
@@ -301,22 +351,56 @@ class OpportunityRunner:
             position_value=(outcome.filled_qty or 0) * (outcome.filled_price or price),
             executed=bool(outcome.ok),
         )
-        self.notify(
-            title if outcome.ok else f"{ev.symbol}: decided against it",
-            body if outcome.ok else (
-                body + "\n\nRight now I am NOT buying — a safety check did not "
-                "pass, so I am staying out. Protecting your money comes first."
-            ),
-            priority="high" if outcome.ok else "default",
-            tags=["moneybag", "chart"] if outcome.ok else ["warning", "chart"],
-        )
+        err = (outcome.error or "").lower()
         if outcome.ok:
+            self.notify(
+                title,
+                body,
+                priority="high",
+                tags=["moneybag", "chart"],
+            )
             self.stats.orders_placed += 1
             self.audit.event("order", symbol=ev.symbol, trigger=ev.kind,
                              order_id=outcome.order_id, qty=outcome.filled_qty,
                              price=outcome.filled_price)
             return {"symbol": ev.symbol, "outcome": "ordered",
                     "order_id": outcome.order_id, "qty": outcome.filled_qty}
+        # v0.4.1: honest plain-English reasons — an execution failure is
+        # NOT the same as a safety rejection, and a long-only account
+        # skipping a short idea is not "a safety check did not pass".
+        if "long-only" in err or "no held position" in err or "naked_short" in err:
+            self.notify(
+                f"{ev.symbol}: skip — this account buys only",
+                (
+                    f"I spotted a chance to profit if {ev.symbol} falls, but "
+                    f"this account can only buy (not short), so I am staying "
+                    f"out. Protecting your money comes first."
+                ),
+                priority="default",
+                tags=["warning", "chart"],
+            )
+            return {"symbol": ev.symbol, "outcome": "skipped_long_only"}
+        if "gate" in err or outcome.error == "FLAT decision" or "bad equity" in err:
+            self.notify(
+                f"{ev.symbol}: decided against it",
+                body + "\n\nRight now I am NOT buying — a safety check did "
+                "not pass, so I am staying out. Protecting your money "
+                "comes first.",
+                priority="default",
+                tags=["warning", "chart"],
+            )
+            return {"symbol": ev.symbol, "outcome": "order_failed", "error": outcome.error}
+        self.notify(
+            f"{ev.symbol}: trade could not be placed",
+            (
+                f"I wanted to invest in {ev.symbol} and all my checks "
+                f"passed, but the broker did not accept the trade just now. "
+                f"Your money stays safe — I am keeping an eye on it and will "
+                f"speak up next time the moment looks right."
+            ),
+            priority="high",
+            tags=["warning", "chart"],
+        )
         return {"symbol": ev.symbol, "outcome": "order_failed", "error": outcome.error}
 
     # ------------------------------------------------------------------
@@ -337,7 +421,11 @@ class OpportunityRunner:
         for sym in open_trades:
             try:
                 px = self.broker.get_latest_price(sym)
-                if not px and self.broker.configured is False:
+                if not px:
+                    # v0.4.1 fix: the market-data client is the universal
+                    # fallback whenever the broker cannot quote a price —
+                    # previously it only ran for unconfigured brokers, so
+                    # paper-mode positions were never exit-checked.
                     snap = self.pipeline.boss.data_client.get_daily(sym, days=2)
                     if snap.ok:
                         px = float(snap.latest_price or 0.0)

@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] **JEXI Market v0.4.1 — 实盘循环 3 轮触发验证发现并修复 8 个缺陷**（每轮：真实跑 `watch --once` → 定位问题 → 修复 → 复跑验证）：
+  - **Paper 模拟器永远无法成交**（致命）：market 单在无注入 price_provider 时对任何新代码都抛 "no price available for paper fill"（重试 4 次后放弃），默认 paper 模式下**一笔单都下不出去**。现安装惰性实时报价兜底 provider + 会话价格缓存 + `seed_price()`（成交价=决策价，确定性回放），watch 循环下单前播种触发价。
+  - **Paper 模式持仓从不检查出场**：`_manage_exits` 的行情兜底仅在 `broker.configured is False` 时生效，paper 券商 `configured=True` 故价格查询永远拿不到 → 止损/止盈形同虚设。现改为"券商报不出价就用行情客户端"，任何券商统一兜底。
+  - **数据全盲与"市场安静"不可区分**：全部股票池拉数失败时 watch 循环静默返回 0 触发（文档承诺的 data-failure budget 实际未实现）。现 TriggerEngine 记录 `last_scan_failures`，全池失败按崩溃周期计入看门狗连败预算 → 连续 N 轮自动熔断 + emergency ntfy。
+  - **风险闸门看不见非 Alpaca 券商的敞口**：`_build_portfolio_state` 只在 Alpaca 配置时读真实账户，paper/binance/pocketoption/mt5 永远显示 0 持仓 → 100% 总敞口上限对默认配置完全失效（实测一路加仓到 93% 无警告）。现优先从**当前活跃券商**（任意 adapter）构建组合视图，Alpaca 退为兼容路径。
+  - **同标的重复加仓无上限**：已持仓品种的入场触发不会被抑制（越买越多、无限金字塔）。现强制"一标的一持仓"，入场触发对持仓品种静默抑制（审计 `trigger_suppressed`），near_stop/near_target 出场时机事件仍放行；`_deep_dive` 内再加一道已持仓防线（防御纵深）。
+  - **Morning plan 每次重启重发**：去重标记只存内存，重启即重播。现持久化到 RiskStateStore（新增 `get_kv/set_kv` 公共接口），重启不重发也不漏发。
+  - **下单失败被谎报为"安全检查未通过"**：执行失败（券商拒单/撮合失败）与做多空单被拒（long-only 账户收到 SHORT 信号）都被笼统说成"风险检查没过"。现三路分离：真被拒 → 说安全检查；long-only 跳过 → 直说"这个账户只能买"；执行失败 → 直说"单子没下出去，钱是安全的，我会继续盯着"。
+  - **`MarketDataClient(config)` 位置参数陷阱**：首参是 fetcher，误传 config 会到下单时才炸出费解的 `'MarketConfig' object has no attribute 'get_daily_data'`。现无 `get_daily_data` 方法的参数自动视为 config 并构建默认 provider 链。
+  - 测试 +6（paper 播种价成交、断网兜底、持仓抑制、数据盲区熔断、计划日持久化、闸门活跃券商视图），jexi_market 套件 226 项；全仓 7126 通过 / 0 失败。
 - [新功能] **JEXI Market v0.4 — 机会驱动交易 + 大白话通知**：
   - **TriggerEngine**（`triggers.py`）：便宜地监视整个股票池，只在真实机会出现时才唤醒昂贵的 agent 管线 — breakout_proximity（带"正在涨向高点"校验，横盘市场永不误报）、momentum_burst（放量急涨/急跌）、oversold_bounce（RSI 超卖回升）、overbought_fade、volatility_squeeze（布林带收口）、trend_pullback（上升趋势回踩 SMA20）、volume_spike、gap_event，以及持仓出场时机（near_stop / near_target，多空双向）。每事件自带英文白话句子 + (symbol, kind) 2 小时冷却防重复。
   - **OpportunityRunner**（`watch.py`）：`jexi-market watch` — 事件驱动循环：监视 → 触发 → 只对触发品种做深度分析 → 过风险/信心闸门后经 OrderLifecycleManager 下单（broker 端 bracket 止损止盈）→ ntfy 白话通知；每日首个循环播报账户计划；数据连续失败同样触发看门狗熔断；`--once` 适配 CI/cron。

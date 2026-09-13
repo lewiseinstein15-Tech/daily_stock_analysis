@@ -134,6 +134,12 @@ class TriggerEngine:
         self._clock = clock
         # last factors per symbol lets callers enrich exits (stop/target)
         self.last_factors: Dict[str, FactorSnapshot] = {}
+        # v0.4.1: how many symbols in the last evaluate_universe scan were
+        # unusable (fetch failed / too few rows).  The runner uses this as
+        # a data-quality outage signal — a blind watcher must not look
+        # identical to a quiet market.
+        self.last_scan_failures: int = 0
+        self._scan_failures: int = 0
 
     # ------------------------------------------------------------------
     # cooldown
@@ -165,6 +171,7 @@ class TriggerEngine:
         if snapshot is None:
             snapshot = self.data.get_daily(symbol, days=self.config.scanner_lookback_days)
         if not snapshot.ok or snapshot.df is None or len(snapshot.df) < self.tcfg.min_rows:
+            self._scan_failures += 1
             return []
 
         factors = compute_factors(snapshot.df, symbol=symbol)
@@ -394,15 +401,23 @@ class TriggerEngine:
         *,
         open_trades: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> List[TriggerEvent]:
-        """Scan the whole universe; return events sorted by urgency."""
+        """Scan the whole universe; return events sorted by urgency.
+
+        After the scan, ``self.last_scan_failures`` holds how many
+        symbols could not be evaluated (bad fetch / too few rows) so
+        callers can distinguish a quiet market from a data outage.
+        """
         open_trades = open_trades or {}
         all_events: List[TriggerEvent] = []
+        self._scan_failures = 0
         for symbol in symbols:
             try:
                 all_events.extend(self.evaluate_symbol(
                     symbol, open_trade=open_trades.get(symbol)))
             except Exception as exc:  # one bad symbol never kills the watch
+                self._scan_failures += 1
                 logger.warning("trigger evaluation failed for %s: %s", symbol, exc)
+        self.last_scan_failures = self._scan_failures
         all_events.sort(key=lambda e: (e.priority, e.score), reverse=True)
         return all_events
 

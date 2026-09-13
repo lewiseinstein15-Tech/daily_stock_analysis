@@ -101,7 +101,19 @@ class MarketDataClient:
          deps (akshare, baostock, ...) are not installed.
     """
 
-    def __init__(self, fetcher: Any = None):
+    def __init__(self, fetcher: Any = None, config: Any = None):
+        # v0.4.1 fix: the first parameter is a *fetcher*, but callers
+        # naturally pass a config object positionally.  Anything without
+        # a ``get_daily_data`` method cannot be a fetcher — treat it as
+        # a config and build the default provider chain instead of
+        # crashing later with "'MarketConfig' object has no attribute
+        # 'get_daily_data'".
+        if fetcher is not None and not hasattr(fetcher, "get_daily_data"):
+            logger.debug(
+                "MarketDataClient: ignoring non-fetcher argument %s — building default provider chain",
+                type(fetcher).__name__,
+            )
+            fetcher = None
         self._fetcher = fetcher
         if fetcher is None:
             self._fetcher = self._maybe_build_repo_fetcher()

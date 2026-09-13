@@ -724,3 +724,162 @@ def test_watch_stats_accumulate():
     assert runner.stats.triggers_fired >= 1
     assert runner.stats.pipeline_runs == 1
     assert runner.stats.orders_placed == 1
+
+
+# ---------------------------------------------------------------------------
+# v0.4.1 regression tests — bugs found by live trigger cycles
+# ---------------------------------------------------------------------------
+
+class _KvState(_StubState):
+    """StubState + persistent kv (mirrors RiskStateStore.get_kv/set_kv)."""
+
+    def __init__(self):
+        super().__init__()
+        self.kv = {}
+
+    def get_kv(self, key, default=None):
+        return self.kv.get(key, default)
+
+    def set_kv(self, key, value):
+        self.kv[key] = str(value)
+
+
+def test_paper_broker_fills_at_seeded_decision_price(tmp_path):
+    """A market order must fill even without an injected price provider —
+    the session's seeded (decision) price is the reference."""
+    from jexi_market.brokers.paper import PaperBroker
+    broker = PaperBroker(str(tmp_path / "p.sqlite"))  # default provider installed
+    broker.seed_price("AAPL", 123.45)  # seeded (decision) price must win
+    assert broker.get_latest_price("AAPL") == pytest.approx(123.45)
+    order = broker.submit_order("AAPL", 2, "buy")
+    assert order.status == "filled"
+    # 5 bps slippage on the seeded price
+    assert order.filled_avg_price == pytest.approx(123.45 * 1.0005, rel=1e-6)
+
+
+def test_paper_broker_default_price_provider_is_network_safe(tmp_path):
+    """With no provider injected the broker installs its own lazy quote
+    provider; when it cannot fetch (offline), fills fall back to the
+    seeded price instead of crashing with 'no price available'."""
+    from jexi_market.brokers.paper import PaperBroker
+
+    calls = {"n": 0}
+
+    def dead_provider(symbol):
+        calls["n"] += 1
+        return 0.0
+
+    broker = PaperBroker(str(tmp_path / "p2.sqlite"), price_provider=dead_provider)
+    broker.seed_price("TSLA", 250.0)
+    order = broker.submit_order("TSLA", 1, "buy")
+    assert order.status == "filled"
+    assert calls["n"] == 0  # seeded price wins, provider never consulted
+    assert broker.get_latest_price("TSLA") == pytest.approx(250.0)
+
+
+def test_held_symbol_never_reenters_but_exit_trigger_notified():
+    """One position per symbol: entry triggers on a held market are
+    suppressed; the near-target heads-up still reaches the user."""
+    hot = _frame([100 + i * 0.5 for i in range(40)])  # price 119.5, target 110
+    runner, lifecycle = _make_runner({"AAPL": hot}, {"AAPL": _decision()})
+    runner.memory = _StubMemory([
+        {"symbol": "AAPL", "outcome": "open", "entry": 100.0,
+         "stop_loss": 95.0, "take_profit": 110.0, "direction": "long"}])
+    result = runner.watch_once()
+    assert lifecycle.opened == [], "must never open a second position in a held symbol"
+    assert result["deep_dives"], "near-target event should still be surfaced"
+    assert result["deep_dives"][0]["outcome"] == "already_held"
+    assert any(e[0] == "trigger_suppressed" for e in runner.audit.events)
+
+
+def test_full_data_outage_counts_as_failure_not_quiet_market():
+    """Every symbol unreadable => data-failure budget trips (watchdog),
+    instead of the old silent 'no triggers' happy path."""
+    runner, _ = _make_runner({}, {})  # no frames at all -> all 9 fail
+    runner.config.max_consecutive_failures = 2
+    result = runner.watch_once()
+    assert result["watched"] is False
+    assert "market data unavailable" in result.get("error", "")
+    assert runner.stats.consecutive_failures == 1
+    assert not runner.state.halted
+    runner.watch_once()
+    assert runner.state.halted, "second full outage must trip the watchdog"
+    titles = [c["title"] for c in runner.reporter.calls]
+    assert any("paused" in t.lower() for t in titles)
+
+
+def test_morning_plan_sent_once_per_day_across_restarts():
+    """last_plan_date persists in the state store: a restart must not
+    re-send the same morning plan (and never skip the day's plan)."""
+    from datetime import datetime as _dt
+    today = _dt.now().strftime("%Y-%m-%d")
+    hot = _frame([100 + i * 0.5 for i in range(40)])
+    runner, _ = _make_runner({"AAPL": hot}, {})
+    runner.config.notify_daily_plan = True
+    runner.state = _KvState()
+
+    class _StubPlan:
+        equity = 100_000.0
+        cash = 90_000.0
+        n_positions = 0
+        max_new_positions = 3
+        risk_per_trade_amount = 1_000.0
+        daily_budget_left = 2_000.0
+        watch_out = []
+        notes = []
+        def to_dict(self):
+            return {"equity": self.equity}
+
+    class _StubPlanner:
+        def build(self):
+            return _StubPlan()
+
+    runner.planner = _StubPlanner()
+    # fresh process: stats empty, state empty
+    runner.stats.last_plan_date = ""
+    assert runner.job_morning_plan() is not None
+    assert runner.state.kv.get("last_plan_date") == today
+    # simulated restart: new in-memory stats, but persisted flag survives
+    runner.stats.last_plan_date = runner.state.get_kv("last_plan_date", "") or ""
+    runner.reporter.calls.clear()
+    assert runner.job_morning_plan() is None
+    assert runner.reporter.calls == [], "restart must not re-send the plan"
+
+
+def test_gate_portfolio_view_uses_active_broker(tmp_path):
+    """The risk gate must see real exposure through ANY configured broker
+    (paper/binance/pocketoption/mt5) — not only Alpaca.  Before v0.4.1 a
+    non-Alpaca portfolio always looked fully flat, so the 100% exposure
+    cap was never enforced on the default paper setup."""
+    from jexi_market.brokers.base import BrokerAccount, BrokerPosition
+    from jexi_market.orchestrator import MarketBoss
+    from jexi_market.risk.state import RiskStateStore
+
+    class _AcctBroker:
+        name = "stub"
+        paper = True
+        configured = True
+
+        def get_account(self):
+            return BrokerAccount(
+                equity=100_000.0, cash=10_000.0, buying_power=10_000.0,
+                positions_value=90_000.0, paper=True)
+
+        def get_positions(self):
+            return [BrokerPosition(
+                symbol="MSFT", qty=10, side="long", market_value=90_000.0,
+                cost_basis=80_000.0, unrealized_pl=10_000.0,
+                unrealized_plpc=0.125, current_price=900.0)]
+
+    boss = MarketBoss(
+        MarketConfig(), enable_enrichment=False,
+        state_store=RiskStateStore(str(tmp_path / "state.sqlite")),
+        broker=_AcctBroker(),
+    )
+    ps = boss._build_portfolio_state(None, symbol="AAPL")
+    assert ps.positions_value == pytest.approx(90_000.0)
+    assert ps.open_positions == 1
+    assert ps.equity == pytest.approx(100_000.0)
+    # base exposure 90% -> a new 25% position must breach the 100% cap
+    new_exposure = ps.positions_value / ps.equity + 0.25
+    assert new_exposure > boss.risk_gate.envelope.max_portfolio_exposure

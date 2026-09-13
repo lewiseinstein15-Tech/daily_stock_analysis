@@ -107,6 +107,7 @@ class MarketBoss:
         sector_classifier: Optional[Any] = None,
         enable_enrichment: bool = True,
         state_store: Optional[RiskStateStore] = None,
+        broker: Optional[Any] = None,
     ):
         self.config = config or MarketConfig()
         self.data_client = data_client or MarketDataClient()
@@ -118,6 +119,11 @@ class MarketBoss:
             state_store=self.state_store,
         )
         self.alpaca = alpaca or AlpacaClient(self.config)
+        # v0.4.1: the ACTIVE broker (any adapter) — the gate's portfolio
+        # view must come from whichever broker JEXI actually trades
+        # through, not only Alpaca (paper/binance/pocketoption/mt5 were
+        # invisible to the exposure check before).
+        self.broker = broker
         self.agents = agents or build_all_agents(self.config)
         # Leadership agents
         self.aldric = ProfAldricAgent(config=self.config)
@@ -351,7 +357,29 @@ class MarketBoss:
         open_positions = 0
         sector_exposure: Dict[str, float] = {}
 
-        if self.alpaca.configured:
+        # v0.4.1: prefer the ACTIVE broker (any adapter) so the gate sees
+        # real exposure on paper/binance/pocketoption/mt5 too — previously
+        # only Alpaca was read and every other broker looked fully flat.
+        active = self.broker
+        if active is not None and getattr(active, "configured", False):
+            try:
+                acct = active.get_account()
+                equity = float(acct.equity or 0.0)
+                cash = float(acct.cash or 0.0)
+                positions = active.get_positions()
+                open_positions = len(positions)
+                positions_value = sum(float(p.market_value or 0.0) for p in positions)
+                if sector and equity > 0:
+                    held_for_symbol = sum(
+                        float(p.market_value or 0.0) for p in positions if p.symbol == symbol
+                    )
+                    sector_exposure[sector] = held_for_symbol / equity
+            except Exception as exc:
+                logger.warning("active broker portfolio state unavailable (%s) — trying alpaca/memory", exc)
+                equity = cash = positions_value = 0
+                open_positions = 0
+
+        if equity <= 0 and self.alpaca.configured:
             try:
                 acct = self.alpaca.get_account()
                 equity = acct.equity

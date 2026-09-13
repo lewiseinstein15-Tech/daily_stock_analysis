@@ -77,9 +77,15 @@ class PaperBroker(Broker):
         self.db_path = db_path or "data/jexi_market/paper_broker.sqlite"
         self.slippage_rate = slippage_bps / 10_000.0
         self.commission_rate = commission_bps / 10_000.0
+        self._last_prices: Dict[str, float] = {}
+        self._default_data_client: Optional[Any] = None
         # Optional callable(symbol) -> float used when no explicit price
         # is passed to submit_order (e.g. the MarketDataClient).
-        self.price_provider = price_provider
+        # v0.4.1: when nothing is injected we install a lazy live-quote
+        # provider so the simulator can always fill an order — previously
+        # every market order on a fresh symbol crashed with "no price
+        # available for paper fill", blocking ALL default-mode trading.
+        self.price_provider = price_provider or self._default_price_provider
         self._lock = threading.Lock()
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -117,13 +123,45 @@ class PaperBroker(Broker):
             (str(value),),
         )
 
+    def _default_price_provider(self, symbol: str) -> float:
+        """Lazy live-quote fallback (0.0 when unavailable — never raises)."""
+        try:
+            from jexi_market.data import MarketDataClient
+            if self._default_data_client is None:
+                self._default_data_client = MarketDataClient()
+            snap = self._default_data_client.get_daily(symbol, days=2)
+            if snap.ok and snap.latest_price:
+                self._last_prices[symbol] = float(snap.latest_price)
+                return float(snap.latest_price)
+        except Exception:
+            pass
+        return 0.0
+
+    def seed_price(self, symbol: str, price: float) -> None:
+        """Remember a reference price (e.g. the price a decision was made on)."""
+        try:
+            p = float(price)
+        except (TypeError, ValueError):
+            return
+        if p > 0:
+            self._last_prices[symbol] = p
+
     def _reference_price(self, symbol: str, explicit: Optional[float]) -> float:
         if explicit and explicit > 0:
+            self._last_prices[symbol] = float(explicit)
             return float(explicit)
+        # v0.4.1: the freshest price this session already knows wins —
+        # seeded by decisions/triggers/quotes, so paper fills happen at
+        # the same price the decision was made on (deterministic), and
+        # the network is only consulted when we know nothing at all.
+        cached = self._last_prices.get(symbol)
+        if cached and cached > 0:
+            return float(cached)
         if self.price_provider is not None:
             try:
                 p = float(self.price_provider(symbol))  # type: ignore[misc]
                 if p > 0:
+                    self._last_prices[symbol] = p
                     return p
             except Exception:
                 pass
@@ -413,6 +451,8 @@ class PaperBroker(Broker):
         try:
             return self._reference_price(symbol, None)
         except ValueError:
+            return None
+        except Exception:
             return None
 
     def is_market_open(self) -> bool:
