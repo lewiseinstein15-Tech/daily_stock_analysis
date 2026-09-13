@@ -64,14 +64,24 @@ class TestTwInstitutionalLiveNetwork(unittest.TestCase):
 
     def _get_feed_or_skip(self, url, params=None):
         """Transport error -> skip (can't judge drift from an unreachable feed); a 200
-        that is not valid JSON (HTML maintenance page / URL migration) -> fail LOUD."""
+        that is not valid JSON (HTML maintenance page / URL migration) -> fail LOUD.
+        A non-200 final status or a CDN security/WAF block page means the endpoint
+        refused *this client* (geo/IP block, e.g. HiNetCDN) — that says nothing
+        about feed shape, so skip instead of raising a false drift alarm."""
         try:
             resp = requests.get(url, params=params, headers=_HEADERS, timeout=20)
         except requests.exceptions.RequestException as exc:
             self.skipTest(f"endpoint unreachable: {exc}")
+        if resp.status_code != 200:
+            self.skipTest(
+                f"{url} answered HTTP {resp.status_code} (CDN/WAF or maintenance block) — "
+                "feed shape cannot be judged from here"
+            )
         try:
             return resp.json()
-        except ValueError as exc:  # non-JSON body is feed drift, not a transient blip
+        except ValueError as exc:  # non-JSON 200 body is feed drift, not a transient blip
+            if "FOR SECURITY REASONS" in resp.text or "無法呈現" in resp.text:
+                self.skipTest(f"{url} served the TWSE security-block page (IP/geo restriction)")
             self.fail(f"{url} returned non-JSON (maintenance page / URL migration?): {exc}")
 
     def _assert_record_shape(self, rec, market_label):

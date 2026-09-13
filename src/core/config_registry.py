@@ -80,6 +80,57 @@ WEB_SETTINGS_HIDDEN_FROM_UI = {
     "PROXY_HOST",
     "PROXY_PORT",
     "SEARXNG_TIMEOUT_SECONDS",
+    # --- JEXI Market runtime (configured via .env, not the web UI) ---
+    # Trading engine toggles & thresholds
+    "JEXI_BROKER",
+    "JEXI_ASSET_CLASS",
+    "JEXI_TRADE_247",
+    "JEXI_LIVE_TRADING_ENABLED",
+    "JEXI_MIN_CONFIDENCE",
+    "JEXI_SIZING_METHOD",
+    "JEXI_BASE_FRACTION",
+    "JEXI_MAX_RISK_PER_TRADE",
+    "JEXI_MAX_PORTFOLIO_EXPOSURE",
+    "JEXI_DAILY_LOSS_LIMIT",
+    "JEXI_DRAWDOWN_HALT",
+    "JEXI_VOL_TARGET",
+    "JEXI_MAX_CONSECUTIVE_FAILURES",
+    "JEXI_KILL_SWITCH_FILE",
+    "JEXI_HEALTH_SERVER",
+    "JEXI_TIMEZONE",
+    "JEXI_LOG_LEVEL",
+    # Scanner & pipeline
+    "JEXI_SCANNER_UNIVERSE",
+    "JEXI_SCANNER_LOOKBACK_DAYS",
+    "JEXI_DEFAULT_SYMBOLS",
+    "JEXI_PAPER_VALIDATION_DAYS",
+    # Local persistence paths
+    "JEXI_STATE_DB",
+    "JEXI_MEMORY_DB",
+    "JEXI_PAPER_BROKER_DB",
+    "JEXI_AUDIT_LOG",
+    # Notifications
+    "JEXI_MARKET_NTFY_TOPIC",
+    "NTFY_DEFAULT_PRIORITY",
+    # Telegram remote control
+    "JEXI_TELEGRAM_BOT_TOKEN",
+    "JEXI_TELEGRAM_CHAT_ID",
+    # Broker credentials / endpoints (sensitive — never exposed in web UI)
+    "ALPACA_API_KEY",
+    "ALPACA_API_SECRET",
+    "ALPACA_ENV",
+    "BINANCE_API_KEY",
+    "BINANCE_API_SECRET",
+    "BINANCE_TESTNET",
+    "POCKET_OPTION_URL",
+    "POCKET_OPTION_SSID",
+    "POCKET_OPTION_DEMO",
+    "MT5_LOGIN",
+    "MT5_PASSWORD",
+    "MT5_PATH",
+    "MT5_SERVER",
+    # Paper broker starting balance
+    "JEXI_PAPER_STARTING_CASH",
 }
 
 _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {

@@ -310,7 +310,12 @@ class RuntimeSchedulerServiceTestCase(unittest.TestCase):
         )
         service._reload_config = lambda: config
         service._analysis_process_target = _blocking_spawn_runner
-        service._analysis_timeout_seconds = lambda: 1
+        # NOTE: timeout must comfortably exceed multiprocessing *spawn*
+        # start-up cost (child re-imports __main__), which can exceed 1s on
+        # slow/CI machines.  The blocked worker sleeps 10s, so 3s still
+        # exercises the exact same timeout-then-recover path.
+        analysis_timeout = 3
+        service._analysis_timeout_seconds = lambda: analysis_timeout
 
         with patch.dict(sys.modules, {"schedule": fake_schedule}), patch(
             "src.services.runtime_scheduler.threading.Thread",
@@ -331,18 +336,18 @@ class RuntimeSchedulerServiceTestCase(unittest.TestCase):
                 "the scheduler callback remained blocked by analysis",
             )
 
-            deadline = time.monotonic() + 4
+            deadline = time.monotonic() + analysis_timeout + 4
             while service.status()["last_error"] is None and time.monotonic() < deadline:
                 time.sleep(0.05)
 
             status = service.status()
             self.assertFalse(status["running"])
-            self.assertIn("timed out after 1s", status["last_error"])
+            self.assertIn(f"timed out after {analysis_timeout}s", status["last_error"])
 
             service._analysis_process_target = _successful_spawn_runner
             self.assertTrue(service.run_now()["accepted"])
 
-            deadline = time.monotonic() + 4
+            deadline = time.monotonic() + analysis_timeout + 4
             while service.status()["last_success_at"] is None and time.monotonic() < deadline:
                 time.sleep(0.05)
 

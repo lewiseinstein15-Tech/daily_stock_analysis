@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
 ## [Unreleased]
+- [修复] **v0.3.1 全仓测试清零（61→0 失败，套件 7068 通过）**：
+  - `requirements.txt` 中文注释含非 ASCII 破折号触发 `test_requirements_file_is_ascii_decodable` 编码门禁 — 改为 ASCII 连字符。
+  - v0.3 新增的 43 个 `.env.example` 键（JEXI_*、券商凭据、Telegram 控制）未登记到 web 配置注册表，导致 `TestEnvExampleWebSettingsCoverage` 失败 — 全部加入 `WEB_SETTINGS_HIDDEN_FROM_UI`（运行时/凭据类密钥本就不应出现在 web UI 中）。
+  - `test_blocked_scheduled_analysis_times_out_and_allows_next_run` 硬编码 1s 看门狗超时，低于 multiprocessing **spawn** 子进程冷启动成本（子进程需重导入 `__main__`，慢机器/CI 必然超时误报）— 超时提升为 3s（被阻塞 worker 睡 10s，测试路径完全不变），等待窗口相应放宽。
+  - `test_tw_institutional_network` 将 CDN 安全拦截页（HiNetCDN 307 "FOR SECURITY REASONS" WAF/IP 封锁）误判为 feed 漂移而 fail-loud — 现区分：HTTP 200 + 非 JSON 仍然响亮失败（真漂移），非 200 或安全拦截页则 skip（无法从当前网络判定 feed 形态）。
 - [新功能] **JEXI Market v0.3 — 24/7 自主交易就绪**：全新 `run247` 常驻运行器（市场时段感知、崩溃恢复、看门狗 N 连败自动熔断、心跳、JSON 健康端点 + Prometheus `/metrics`）、Telegram 远程控制（`/status /account /positions /pnl /pause /resume /kill /clear`）、结构化信心门槛（`JEXI_MIN_CONFIDENCE`，低于阈值不交易）与持久化 kill-switch（`killswitch on|off|pause|resume`，熔断状态跨重启保留）。
 - [新功能] **多券商抽象层**（`jexi_market/brokers/`）：统一 `Broker` 接口 + Alpaca（原生 bracket 单）、离线 Paper 模拟器（SQLite 持久化、本地止损/止盈撮合）、Binance 现货（HMAC 签名、默认测试网）、Pocket Option（社区 SSID websocket 协议，**非官方**，默认模拟账户）、MetaTrader 5（可选依赖），`JEXI_BROKER` 环境变量一键切换，`jexi-market brokers` 查看就绪状态。
 - [新功能] **订单生命周期管理器**（`execution/lifecycle.py`）：入场即挂 broker 端止损/止盈 bracket、指数退避重试（2/4/8s）、成交校验、每轮对账（memory ↔ 券商持仓）、止损/止盈本地兜底强平、外部平仓自动回写记忆。
