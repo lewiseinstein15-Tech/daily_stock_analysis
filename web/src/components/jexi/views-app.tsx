@@ -98,7 +98,9 @@ export function CommandView({ go, account, feed, isDemo }: ViewProps) {
           <div className="mt-1 text-[13px]" style={{ color: "var(--ink-3)" }}>
             {account
               ? `${money(account.cash)} cash · ${positions.length} open position${positions.length === 1 ? "" : "s"}`
-              : "Sign in to sync your real paper account, keys and feed."}
+              : isDemo
+                ? "Sign in to sync your real paper account, keys and feed."
+                : "Syncing your account…"}
           </div>
           <div className="mt-4 grid grid-cols-3 gap-3">
             {gainers.map(([s, q]) => (
