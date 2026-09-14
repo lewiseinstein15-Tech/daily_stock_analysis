@@ -1,0 +1,323 @@
+@import "tailwindcss";
+
+/* JEXI MARKET design tokens v2 */
+/* ============================================================
+   JEXI MARKET — design tokens (docs/jexi-market-design-system.md)
+   ============================================================ */
+
+:root {
+  --bg: #0c0b09;
+  --panel: #15130f;
+  --panel-2: #1c1915;
+  --panel-3: #241f19;
+  --line: #282318;
+  --line-soft: #201c15;
+
+  --ink: #f3eee6;
+  --ink-2: #a99f90;
+  --ink-3: #7a7163;
+
+  --ember: #ff7a3d;
+  --coral: #ff6b5e;
+  --peach: #ffb88c;
+  --sand: #e8d9c4;
+  --gold: #e5b567;
+
+  --up: #4cc38a;
+  --down: #ff5d5d;
+
+  --radius: 14px;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* shadcn compatibility remap (warm dark) */
+:root {
+  --background: var(--bg);
+  --foreground: var(--ink);
+  --card: var(--panel);
+  --card-foreground: var(--ink);
+  --popover: var(--panel-2);
+  --popover-foreground: var(--ink);
+  --primary: var(--ember);
+  --primary-foreground: #14100b;
+  --secondary: var(--panel-2);
+  --secondary-foreground: var(--ink);
+  --muted: var(--panel-2);
+  --muted-foreground: var(--ink-2);
+  --accent: var(--panel-2);
+  --accent-foreground: var(--ink);
+  --destructive: var(--down);
+  --border: var(--line);
+  --input: var(--panel-2);
+  --ring: var(--ember);
+  --radius: 0.875rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --font-sans: var(--font-ui), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-display), Georgia, serif;
+  --font-mono: var(--font-data), ui-monospace, monospace;
+}
+
+html {
+  background: var(--bg);
+  color-scheme: dark;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-ui), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--ember) 32%, transparent);
+}
+
+/* warm page glow — one per view, never over data */
+.jexi-glow {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(900px 420px at 70% -10%, color-mix(in srgb, var(--ember) 7%, transparent), transparent 70%),
+    radial-gradient(700px 380px at 10% 110%, color-mix(in srgb, var(--coral) 4%, transparent), transparent 70%);
+}
+
+/* ---------- primitives ---------- */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  min-width: 0;
+}
+.panel-2 {
+  background: var(--panel-2);
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  min-width: 0;
+}
+
+.label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  font-weight: 500;
+}
+
+.data {
+  font-family: var(--font-data), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.display {
+  font-family: var(--font-display), Georgia, serif;
+  font-weight: 560;
+  letter-spacing: -0.015em;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-radius: 10px;
+  font-weight: 550;
+  font-size: 14px;
+  min-height: 44px;
+  padding: 0 18px;
+  transition: all 150ms var(--ease);
+  cursor: pointer;
+  border: 1px solid transparent;
+  user-select: none;
+}
+.btn:active {
+  transform: scale(0.98);
+}
+.btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--ember) 55%, transparent);
+  outline-offset: 2px;
+}
+.btn[disabled] {
+  opacity: 0.4;
+  pointer-events: none;
+}
+.btn-primary {
+  background: linear-gradient(135deg, var(--ember), var(--coral));
+  color: #180f08;
+}
+.btn-primary:hover {
+  filter: brightness(1.06);
+}
+.btn-ghost {
+  background: var(--panel-2);
+  border-color: var(--line);
+  color: var(--ink);
+}
+.btn-ghost:hover {
+  background: var(--panel-3);
+}
+.btn-line {
+  background: transparent;
+  border-color: var(--line);
+  color: var(--ink-2);
+}
+.btn-line:hover {
+  color: var(--ink);
+  border-color: var(--ink-3);
+}
+
+.input {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  min-height: 44px;
+  padding: 0 14px;
+  color: var(--ink);
+  font-size: 14px;
+  transition: border-color 150ms var(--ease), background 150ms var(--ease);
+}
+.input::placeholder {
+  color: var(--ink-3);
+}
+.input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--ember) 55%, var(--line));
+  background: var(--panel-3);
+}
+
+.row-link {
+  transition: background 150ms var(--ease), transform 150ms var(--ease);
+}
+.row-link:hover {
+  background: var(--panel-2);
+}
+
+/* ---------- motion ---------- */
+
+@keyframes jexi-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.view-enter {
+  animation: jexi-rise 220ms var(--ease) both;
+}
+
+@keyframes jexi-draw {
+  from {
+    stroke-dashoffset: var(--draw, 1200);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes jexi-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.live-dot {
+  animation: jexi-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes jexi-spin-slow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes jexi-ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.ticker-track {
+  animation: jexi-ticker 46s linear infinite;
+}
+.ticker-track:hover {
+  animation-play-state: paused;
+}
+
+@keyframes jexi-shimmer {
+  from {
+    background-position: -200px 0;
+  }
+  to {
+    background-position: 200px 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--panel-2) 25%, var(--panel-3) 50%, var(--panel-2) 75%);
+  background-size: 400px 100%;
+  animation: jexi-shimmer 1.4s linear infinite;
+  border-radius: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ---------- scrollbars ---------- */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}

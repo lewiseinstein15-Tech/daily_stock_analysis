@@ -1,0 +1,32 @@
+{
+  "name": "jexi-web",
+  "version": "0.2.1",
+  "private": true,
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "framer-motion": "^12.23.2",
+    "lucide-react": "^0.525.0",
+    "next": "^16.1.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^3.3.1",
+    "tailwindcss-animate": "^1.0.7",
+    "zustand": "^5.0.6"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "tailwindcss": "^4",
+    "@tailwindcss/postcss": "^4"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
