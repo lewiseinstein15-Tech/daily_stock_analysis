@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="JexiTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/jexi_bg</item>
+        <item name="android:statusBarColor">@color/jexi_bg</item>
+        <item name="android:navigationBarColor">@color/jexi_bg</item>
+        <item name="android:windowSplashScreenBackground">@color/jexi_bg</item>
+    </style>
+</resources>

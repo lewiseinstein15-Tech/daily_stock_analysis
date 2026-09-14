@@ -1,3 +1,8 @@
+## [Unreleased]
+- [Added] **Jexi Mobile v1.0.0 — native Android app (APK) + multi-user app source** (`mobile-app/`):
+  - Multi-user by design: every trader creates their own in-app account and enters their two keys inside the app (AI model key — Gemini or any other; broker API key — Alpaca, Binance, Pocket Option, MT5 and more). Keys live on the device, never in GitHub or git secrets.
+  - Live dashboard: full balance, every trade, every dollar of profit, plain-English Jexi feed, pause / resume / kill-switch, 4-step in-app withdrawal flow — all real-time.
+  - Ships as `Jexi-v1.0.0.apk` (GitHub Release asset): native Android shell (minSdk 24 / target 34), offline demo mode, signed, launcher icon included; full Expo/React Native source in `mobile-app/`.
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -7,7 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 > For user-friendly release highlights, see the [GitHub Releases](https://github.com/ZhuLinsen/daily_stock_analysis/releases) page.
 
-## [Unreleased]
 - [修复] **JEXI Market v0.4.1 — 实盘循环 3 轮触发验证发现并修复 8 个缺陷**（每轮：真实跑 `watch --once` → 定位问题 → 修复 → 复跑验证）：
   - **Paper 模拟器永远无法成交**（致命）：market 单在无注入 price_provider 时对任何新代码都抛 "no price available for paper fill"（重试 4 次后放弃），默认 paper 模式下**一笔单都下不出去**。现安装惰性实时报价兜底 provider + 会话价格缓存 + `seed_price()`（成交价=决策价，确定性回放），watch 循环下单前播种触发价。
   - **Paper 模式持仓从不检查出场**：`_manage_exits` 的行情兜底仅在 `broker.configured is False` 时生效，paper 券商 `configured=True` 故价格查询永远拿不到 → 止损/止盈形同虚设。现改为"券商报不出价就用行情客户端"，任何券商统一兜底。

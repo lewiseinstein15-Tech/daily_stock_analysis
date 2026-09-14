@@ -89,3 +89,8 @@ static/
 /apps/dsa-desktop/node_modules/
 /node_modules/
 docs/specs/
+
+# Jexi mobile app
+/mobile-app/node_modules/
+/mobile-app/.expo/
+/mobile-app/dist/
