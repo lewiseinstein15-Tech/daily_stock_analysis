@@ -1,3 +1,11 @@
+## [0.6.0] — Jexi Server + app live mode
+- [Added] **Jexi Server** (`server/`) — deployable to Vercel, database on Cloudflare D1:
+  - Multi-user accounts (email + password), login tokens, per-user encrypted key vault (AES-256-GCM): AI model key + broker key, entered in the app, never in git.
+  - REST API: register/login, keys (masked reads), account + live positions, trades, profits (win rate, equity curve), withdrawals (50% equity limit), plain-English feed, engine tick.
+  - Trading engine: trend-following with hard -3% safety line and +6% target per trade, 15% budget per position, max 5 positions, live prices from Yahoo (dual host) with Stooq fallback; runs on Vercel Cron (weekdays 13:30 UTC) and opportunistically when the app opens (3-minute gate).
+  - D1 SQL schema in `server/db/schema.sql`; no external npm dependencies beyond Next.js; engine self-test with simulated prices in `server/scripts/test_engine.ts`.
+- [Added] **Mobile app live mode (APK v1.1.0)**: Settings -> "Your server" card (server URL + email + password) connects the app to your deployed server; balance, trades, profits, feed, withdrawals then come from the server and refresh every few seconds; keys sync to the server encrypted; demo mode still works fully offline.
+- [Fixed] App demo shortcut now grants a throwaway demo profile instead of bouncing back; welcome feed message for new profiles.
 ## [Unreleased]
 - [Added] **Jexi Mobile v1.0.0 — native Android app (APK) + multi-user app source** (`mobile-app/`):
   - Multi-user by design: every trader creates their own in-app account and enters their two keys inside the app (AI model key — Gemini or any other; broker API key — Alpaca, Binance, Pocket Option, MT5 and more). Keys live on the device, never in GitHub or git secrets.

@@ -94,3 +94,11 @@ docs/specs/
 /mobile-app/node_modules/
 /mobile-app/.expo/
 /mobile-app/dist/
+
+# Jexi server + app build artifacts
+/server/node_modules/
+/server/.next/
+/server/.env
+/server/.env.local
+/mobile-app/webexport/
+/mobile-app/preview/

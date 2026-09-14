@@ -9,11 +9,17 @@ import { Btn, Orb, Sub } from '../components/ui';
 export default function Welcome() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { onboarded, booted } = useJexi();
+  const { onboarded, booted, setProfile } = useJexi();
 
   const enter = () => {
     if (onboarded) router.replace('/home');
     else router.push('/onboarding');
+  };
+
+  // Demo look-around: give a throwaway profile so the app guard lets us in.
+  const demo = () => {
+    setProfile({ name: 'Demo user', email: 'demo@jexi.app' });
+    router.replace('/home');
   };
 
   if (!booted) return <View style={s.fill} />;
@@ -48,7 +54,7 @@ export default function Welcome() {
 
       <View style={s.spacer} />
       <Btn label={onboarded ? 'Open my app' : 'Get started'} onPress={enter} />
-      <TouchableOpacity onPress={() => router.replace('/home')}>
+      <TouchableOpacity onPress={demo}>
         <Sub style={s.demoLink}>Look around in demo mode first</Sub>
       </TouchableOpacity>
       <Sub style={s.foot}>Demo preview · demo money only · nothing is pushed to GitHub</Sub>
