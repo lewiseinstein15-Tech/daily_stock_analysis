@@ -26,10 +26,14 @@ function series(start: number, drift: number, n = 30): number[] {
 // Install fake fetch BEFORE importing the engine's prices module
 globalThis.fetch = (async (url: any) => {
   const u = String(url instanceof URL ? url : url?.url || url);
-  const m = u.match(/chart\/([A-Za-z0-9.]+)/);
+  const m = u.match(/chart\/([A-Za-z0-9.\-=%]+)/);
   if (u.includes("stooq.com")) throw new Error("blocked");
-  if (m && SCENARIO_PRICES[m[1].toUpperCase()]) {
-    return { ok: true, json: async () => fakeChartJson(SCENARIO_PRICES[m[1].toUpperCase()]) } as any;
+  if (m) {
+    const symbol = decodeURIComponent(m[1]).toUpperCase();
+    const closes = SCENARIO_PRICES[symbol];
+    if (closes) {
+      return { ok: true, json: async () => fakeChartJson(closes) } as any;
+    }
   }
   return { ok: false, status: 429, json: async () => ({}) } as any;
 }) as any;
@@ -39,7 +43,7 @@ import { getStore } from "../lib/store";
 import { resetPriceCache } from "../lib/prices";
 
 async function main() {
-  const store = getStore();
+  const store: any = getStore();
 
   // ---------- scenario 1: uptrend -> BUY ----------
   SCENARIO_PRICES = { AAPL: series(200, 0.01), MSFT: series(400, -0.002) };
@@ -48,7 +52,7 @@ async function main() {
   const r1 = await tickUser(store, user.id);
   const trades1 = await store.listTrades(user.id, 10);
   console.log("S1 tick:", JSON.stringify(r1));
-  console.log("S1 trades:", trades1.map((t) => `${t.side} ${t.qty} ${t.symbol} @ ${t.price}`));
+  console.log("S1 trades:", trades1.map((t: any) => `${t.side} ${t.qty} ${t.symbol} @ ${t.price}`));
   if (!(trades1.length === 1 && trades1[0].side === "BUY" && trades1[0].symbol === "AAPL")) {
     console.error("FAIL: expected exactly one BUY of AAPL");
     process.exit(1);
@@ -56,14 +60,17 @@ async function main() {
 
   // ---------- scenario 2: crash -> SELL at safety line ----------
   resetPriceCache();
-  SCENARIO_PRICES = { AAPL: series(200, 0.01).slice(0, 25).concat([150, 149]), MSFT: series(400, -0.002) };
+  SCENARIO_PRICES = {
+    AAPL: series(200, 0.01).slice(0, 25).concat([150, 149]),
+    MSFT: series(400, -0.002),
+  };
   const r2 = await tickUser(store, user.id);
   const trades2 = await store.listTrades(user.id, 10);
-  const sell = trades2.find((t) => t.side === "SELL");
+  const sell = trades2.find((t: any) => t.side === "SELL");
   const feed = await store.listFeed(user.id, 10);
   console.log("S2 tick:", JSON.stringify(r2));
   console.log("S2 sell:", sell ? `SELL ${sell.qty} ${sell.symbol} @ ${sell.price} pnl=${sell.pnl}` : "NONE");
-  console.log("S2 feed:", feed.map((f) => f.message.slice(0, 90)));
+  console.log("S2 feed:", feed.map((f: any) => f.message.slice(0, 90)));
   if (!sell || sell.pnl >= 0) {
     console.error("FAIL: expected a loss-selling SELL after the crash");
     process.exit(1);

@@ -8,6 +8,10 @@ interface Body {
   name?: string;
 }
 
+function isAdminEmail(email: string): boolean {
+  return Boolean(process.env.ADMIN_EMAIL) && email === (process.env.ADMIN_EMAIL || "").trim().toLowerCase();
+}
+
 export async function POST(req: Request) {
   const body = await readJson<Body>(req);
   const email = (body?.email || "").trim().toLowerCase();
@@ -20,7 +24,9 @@ export async function POST(req: Request) {
   const store = getStore();
   if (await store.getUserByEmail(email)) return bad("An account with this email already exists. Try logging in.", 409);
 
-  const user = await store.createUser(email, hashPassword(password), name);
+  const isAdmin = isAdminEmail(email) ? 1 : 0;
+  const user = await store.createUser(email, hashPassword(password), name, isAdmin);
+  if (isAdmin) await store.promoteToAdmin(email);
   const account = await store.ensureAccount(user.id, startingBalance());
   await store.insertFeed(
     user.id,
@@ -29,5 +35,12 @@ export async function POST(req: Request) {
   );
 
   const token = signToken({ uid: user.id, email: user.email });
-  return ok({ token, user: { id: user.id, email: user.email, name: user.name }, account }, 201);
+  return ok(
+    {
+      token,
+      user: { id: user.id, email: user.email, name: user.name, role: isAdmin ? "admin" : "user" },
+      account,
+    },
+    201
+  );
 }
