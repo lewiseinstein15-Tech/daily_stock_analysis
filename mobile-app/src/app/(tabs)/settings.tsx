@@ -145,7 +145,7 @@ export default function Settings() {
 
       <SectionTitle>About</SectionTitle>
       <Card style={{ gap: 6 }}>
-        <Sub>Jexi app · version 1.1.0 {liveMode ? '(live with your server)' : '(demo mode)'}</Sub>
+        <Sub>Jexi app · version 1.2.0 {liveMode ? '(live with your server)' : '(demo mode)'}</Sub>
         <Sub>{liveMode ? 'Live mode: your money numbers come from your server account.' : 'Demo money only until you connect your server in the card above.'}</Sub>
         <Sub>Nothing from this project is uploaded to GitHub.</Sub>
       </Card>

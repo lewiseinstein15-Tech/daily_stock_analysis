@@ -25,7 +25,7 @@ public class MainActivity extends Activity {
 
     private static final String HOST = "appassets.jexi.local";
     private static final String START_URL = "https://appassets.jexi.local/app/index.html";
-    private static final String BG = "#0A0E14";
+    private static final String BG = "#0c0b09";
 
     private WebView web;
 
