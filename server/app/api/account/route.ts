@@ -11,7 +11,13 @@ export async function GET(req: Request) {
   const store = getStore();
 
   const account = await store.getAccount(auth.uid);
-  if (!account) return bad("No account found.", 404);
+  if (!account) {
+    // Valid token but no user row = revoked/deleted session: tell the client
+    // to sign out (401), not merely "missing data" (404).
+    const user = await store.getUserById(auth.uid);
+    if (!user) return bad("Session no longer valid — please sign in again.", 401);
+    return bad("No account found.", 404);
+  }
 
   // Keep Jexi working even without cron: if the last evaluation is stale,
   // run one now (bounded by prices cache + 3 minute gate).
