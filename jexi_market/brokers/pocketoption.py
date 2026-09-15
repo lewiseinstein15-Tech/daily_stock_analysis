@@ -15,7 +15,9 @@
 
 Config (environment):
 * ``POCKET_OPTION_SSID``     — the SSID session string copied from your
-  browser websocket login  (required)
+  browser websocket login.  Both forms work: the bare session token
+  (the value inside ``"session":"..."``) or the whole
+  ``42["auth",{...}]`` message — the adapter extracts the payload.
 * ``POCKET_OPTION_DEMO``     — default "1"; set "0" for the live account
   (also requires JEXI_LIVE_TRADING_ENABLED=1)
 * ``POCKET_OPTION_URL``      — optional override of the websocket endpoint
@@ -54,10 +56,30 @@ class PocketOptionBroker(Broker):
         self.ssid = os.getenv("POCKET_OPTION_SSID", "").strip()
         self.demo = os.getenv("POCKET_OPTION_DEMO", "1").strip().lower() in {"1", "true", "yes", "on"}
         self.ws_url = os.getenv("POCKET_OPTION_URL", DEFAULT_WS_URL)
+        self._auth = self._parse_ssid(self.ssid)
         self._ws = None
         self._lock = threading.Lock()
         self._balances: Dict[str, float] = {}
         self._orders: Dict[str, Dict[str, Any]] = {}
+
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _parse_ssid(raw: str) -> Dict[str, Any]:
+        """Accept the bare session token OR the full 42["auth",{...}] frame.
+
+        Users copy whichever they see first in DevTools — both must work.
+        Anything unparseable is treated as a plain session token.
+        """
+        raw = (raw or "").strip()
+        if raw.startswith("42[") or raw.startswith("["):
+            try:
+                start = raw.index("[")
+                payload = json.loads(raw[start:])
+                if isinstance(payload, list) and len(payload) > 1 and isinstance(payload[1], dict):
+                    return dict(payload[1])
+            except (ValueError, IndexError):
+                pass
+        return {"session": raw}
 
     # ------------------------------------------------------------------
     @property
@@ -105,7 +127,11 @@ class PocketOptionBroker(Broker):
             ws.recv()  # "0{...}" engine.io open
             ws.send("40")
             ws.recv()  # "40{...}" namespace
-            auth_payload = json.dumps(["auth", {"session": self.ssid, "isDemo": 1 if self.demo else 0}])
+            # The saved SSID may carry uid/platform extras; the adapter's own
+            # demo flag always wins — the app decides demo vs live.
+            auth_data = dict(self._auth)
+            auth_data["isDemo"] = 1 if self.demo else 0
+            auth_payload = json.dumps(["auth", auth_data])
             ws.send(f'42{auth_payload}')
             deadline = time.time() + 8
             while time.time() < deadline:
