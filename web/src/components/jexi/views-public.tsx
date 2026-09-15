@@ -4,12 +4,14 @@
 import { useState } from "react";
 import { ArrowRight, BarChart3, BrainCircuit, KeyRound, LineChart, ShieldCheck, Sparkles } from "lucide-react";
 import { CoreOrb, JexiMark, Wordmark } from "@/components/jexi/brand";
+import { ConvictionDial } from "@/components/jexi/charts";
 import { Delta, Panel, Pill, SectionTitle, Stat, TickerStrip, LiveDot } from "@/components/jexi/bits";
 import {
   TICKER_SYMBOLS,
   priceFmt,
   useQuotes,
   useAuth,
+  useAnalysis,
   money,
 } from "@/lib/jexi/data";
 
@@ -18,6 +20,7 @@ type Go = (view: string, symbol?: string) => void;
 export function Landing({ go }: { go: Go }) {
   const { quotes } = useQuotes(TICKER_SYMBOLS, 25000);
   const { user } = useAuth();
+  const { analysis: nvdaBrief, loading: briefLoading } = useAnalysis("NVDA");
   const nvda = quotes["NVDA"];
   const spy = quotes["SPY"];
 
@@ -136,48 +139,92 @@ export function Landing({ go }: { go: Go }) {
         </div>
       </section>
 
-      {/* thesis preview */}
+      {/* live data brief preview — real, computed on the server this minute */}
       <section className="mx-auto max-w-6xl px-5 pb-14">
         <Panel className="grid gap-8 md:grid-cols-[1.1fr_1fr]">
           <div>
-            <Pill tone="brand">Thesis preview</Pill>
-            <h3 className="display mt-4 text-[30px] leading-tight">NVDA — Bullish</h3>
+            <Pill tone="brand"><LiveDot /> live data brief</Pill>
+            <h3 className="display mt-4 text-[30px] leading-tight">
+              {briefLoading && !nvdaBrief
+                ? "Reading the live tape…"
+                : nvdaBrief
+                  ? `NVDA — ${nvdaBrief.stance}`
+                  : "Live briefs on every asset"}
+            </h3>
             <p className="mt-3 max-w-[440px] text-[14px] leading-relaxed" style={{ color: "var(--ink-2)" }}>
-              An example of the JEXI thesis format: a stance, a conviction level, and the
-              evidence split into drivers, risks and catalysts. Connect your own AI key to
-              generate live theses for your watchlist.
+              {nvdaBrief
+                ? nvdaBrief.desks.find((d) => d.key === "technical")?.line ||
+                  nvdaBrief.desks[0]?.line ||
+                  "Six desks examined the live data just now — this line updates as the market moves."
+                : "Every asset page runs six research desks against live market data — computed this minute, with the method shown. Open the NVDA page to see a full brief."}
             </p>
             <div className="mt-5 flex flex-wrap gap-2">
-              {["Revenue growth", "AI infrastructure demand", "Margin trajectory"].map((d) => (
-                <span
-                  key={d}
-                  className="rounded-lg px-2.5 py-1.5 text-[12.5px]"
-                  style={{ background: "var(--panel-2)", border: "1px solid var(--line-soft)", color: "var(--ink-2)" }}
-                >
-                  {d}
-                </span>
-              ))}
+              {nvdaBrief
+                ? [
+                    `Range position ${nvdaBrief.metrics.rangePos}%`,
+                    `Volatility ${nvdaBrief.metrics.volAnn}% ann.`,
+                    `${nvdaBrief.metrics.upDays30}/30 up sessions`,
+                  ].map((d) => (
+                    <span
+                      key={d}
+                      className="rounded-lg px-2.5 py-1.5 text-[12.5px]"
+                      style={{ background: "var(--panel-2)", border: "1px solid var(--line-soft)", color: "var(--ink-2)" }}
+                    >
+                      {d}
+                    </span>
+                  ))
+                : ["Live daily closes", "Six analyst desks", "Verifier checks"].map((d) => (
+                    <span
+                      key={d}
+                      className="rounded-lg px-2.5 py-1.5 text-[12.5px]"
+                      style={{ background: "var(--panel-2)", border: "1px solid var(--line-soft)", color: "var(--ink-2)" }}
+                    >
+                      {d}
+                    </span>
+                  ))}
             </div>
             <button className="btn btn-ghost mt-7" onClick={() => go("asset", "NVDA")}>
               Open the NVDA page <ArrowRight size={15} />
             </button>
           </div>
-          <div className="grid grid-cols-3 gap-3 self-center">
-            {[
-              { k: "Drivers", v: "3", d: "evidence-backed" },
-              { k: "Risks", v: "3", d: "ranked by impact" },
-              { k: "Catalysts", v: "3", d: "with time horizons" },
-            ].map((x) => (
-              <div key={x.k} className="panel-2 p-4 text-center">
-                <div className="data text-[26px]" style={{ color: "var(--peach)" }}>
-                  {x.v}
+          <div className="grid grid-cols-3 items-center gap-3">
+            {nvdaBrief ? (
+              <>
+                <div className="col-span-3 flex justify-center">
+                  <ConvictionDial value={nvdaBrief.conviction} size={120} />
                 </div>
-                <div className="label mt-1">{x.k}</div>
-                <div className="mt-0.5 text-[11px]" style={{ color: "var(--ink-3)" }}>
-                  {x.d}
+                <div className="panel-2 col-span-3 p-4">
+                  <div className="label mb-2" style={{ color: "var(--gold)" }}>
+                    Verifier caveats
+                  </div>
+                  <ul className="flex flex-col gap-1.5">
+                    {(nvdaBrief.conflicts.length ? nvdaBrief.conflicts : ["No contradictions across the six desks."])
+                      .slice(0, 2)
+                      .map((c) => (
+                        <li key={c} className="text-[12px] leading-relaxed" style={{ color: "var(--ink-2)" }}>
+                          • {c}
+                        </li>
+                      ))}
+                  </ul>
                 </div>
-              </div>
-            ))}
+              </>
+            ) : (
+              [
+                { k: "Desks", v: "6", d: "run on live data" },
+                { k: "Verifier", v: "1", d: "before publishing" },
+                { k: "Fake numbers", v: "0", d: "by design" },
+              ].map((x) => (
+                <div key={x.k} className="panel-2 p-4 text-center">
+                  <div className="data text-[26px]" style={{ color: "var(--peach)" }}>
+                    {x.v}
+                  </div>
+                  <div className="label mt-1">{x.k}</div>
+                  <div className="mt-0.5 text-[11px]" style={{ color: "var(--ink-3)" }}>
+                    {x.d}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </Panel>
       </section>
@@ -226,19 +273,29 @@ export function Landing({ go }: { go: Go }) {
             {user ? "Go to your account" : "Create your account"} <ArrowRight size={16} />
           </button>
         </div>
-        <Footer />
+        <Footer go={go} />
       </section>
     </div>
   );
 }
 
-export function Footer() {
+export function Footer({ go }: { go?: Go }) {
   return (
     <footer className="mt-14 flex flex-col items-center gap-3 border-t pt-8" style={{ borderColor: "var(--line-soft)" }}>
       <div className="flex items-center gap-2.5">
         <JexiMark size={26} />
         <Wordmark />
       </div>
+      {go && (
+        <div className="flex items-center gap-4 text-[12.5px]">
+          <button className="row-link" style={{ color: "var(--ink-2)" }} onClick={() => go("legal", "terms")}>
+            Terms of Service
+          </button>
+          <button className="row-link" style={{ color: "var(--ink-2)" }} onClick={() => go("legal", "privacy")}>
+            Privacy Policy
+          </button>
+        </div>
+      )}
       <p className="text-[12px]" style={{ color: "var(--ink-3)" }}>
         JEXI Market trades paper money by default. Nothing here is financial advice. © {new Date().getFullYear()} JEXI.
       </p>
@@ -345,6 +402,18 @@ export function AuthView({ go }: { go: Go }) {
           >
             {mode === "in" ? "New here? Create an account" : "Already have an account? Sign in"}
           </button>
+
+          <p className="mt-1 text-center text-[11.5px] leading-relaxed" style={{ color: "var(--ink-3)" }}>
+            By continuing you agree to our{" "}
+            <button className="row-link underline underline-offset-2" style={{ color: "var(--ink-2)" }} onClick={() => go("legal", "terms")}>
+              Terms of Service
+            </button>{" "}
+            and{" "}
+            <button className="row-link underline underline-offset-2" style={{ color: "var(--ink-2)" }} onClick={() => go("legal", "privacy")}>
+              Privacy Policy
+            </button>
+            . Paper trading only — nothing here is financial advice.
+          </p>
         </div>
       </Panel>
     </div>

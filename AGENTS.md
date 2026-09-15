@@ -289,3 +289,20 @@ CI 通过只能说明自动检查通过，不能替代人工语义收敛，也�
 - 自动 tag 默认不触发，只有 commit title 包含 `#patch`、`#minor`、`#major` 才会触发版本号更新。
 - 手动打 tag 必须使用 annotated tag。
 - 用户可见变更优先通过 PR 合入，并补齐 label 与验证说明。
+
+## 10. JEXI Market app-building rules (for AI agents)
+
+Research basis: AGENTS.md guides (progressive disclosure, high-signal rules), lessons from 2500+ analyzed agent files, and production agent-building practice. These rules are mandatory when an agent works on `server/`, `web/`, or `mobile-app/`.
+
+- NO PLACEHOLDERS. Every screen ships with real data from real endpoints. If a data source does not exist yet, show an honest empty state that says exactly what is missing and how to enable it. Fake numbers, lorem text, "demo" datasets and hardcoded examples are forbidden in shipped UI.
+- NEVER FABRICATE FINANCIAL INFORMATION. Every price, percentage, stance or conviction shown to the user must be computed from live server data (quotes, closes, trades, accounts). Label the computation method in the UI ("computed from live daily closes"). Stances derived from data are OK; invented narratives are not.
+- PRESERVE WORKING FUNCTIONALITY. The brief is "better product + better design", never "new UI + broken product". Before changing a screen, learn which real features it wires (auth, keys, trades, withdrawals, alerts); after changing it, prove they still work end-to-end.
+- KEEP THE DESIGN SYSTEM. Use the existing warm token system (charcoal + ember/coral/peach, `--ink*`, `--panel*`, `--line*` variables) and the shared primitives (Panel, Pill, Stat, Delta, EmptyState, Sparkline, AreaChart). Do not introduce ad-hoc colors, neon accents, or outside component libraries.
+- REAL DATA FLOW ONLY. The web app talks to the JEXI server (`/api/*`); the server is the only source of market data, accounts and trades. Do not bypass the server or duplicate its logic in the client.
+- UPDATE PATH IS PART OF THE PRODUCT. `web/` exposes its app version and checks `/api/version` on load; `mobile-app/` gates on `minRequired` and shows an "Update your app" screen. When you ship a breaking client change, bump the version and set the matching env (`APP_LATEST_VERSION`, `APP_MIN_VERSION`) in the same change.
+- ADMIN IS A FIRST-CLASS VIEW. Admin features must show real aggregates from `/api/admin/overview` (user count, per-user equity/PnL/trades, recent trades, withdrawals) and must be verified with a real admin session, not mocked.
+- LEGAL PAGES SHIP WITH THE APP. Terms of Service and Privacy Policy live in-product, linked from landing, auth and settings. When data handling changes, update the Privacy Policy in the same PR.
+- TEST BEFORE YOU CLAIM. Server: `npx tsc --noEmit` clean plus live endpoint checks (health, auth, market, version, analysis, admin). Web: production build clean plus browser QA of every changed screen as guest AND signed-in member (admin screens also as admin). Report what you verified and what you did not.
+- VERIFY DISPLAY ARTIFACTS WITH A COMPILER. If a file "looks corrupted" in terminal output, confirm with `tsc`/`node --check`/hexdump before editing; never patch based on a rendering glitch alone.
+- SECURITY DEFAULTS. Keys are AES-256 encrypted at rest and never returned unmasked; admin endpoints check `is_admin` server-side; secrets live in env vars, never in code or git.
+- PLAIN ENGLISH WITH USERS. Error messages, empty states and feed events say what happened and what to do next — no jargon without translation.

@@ -2,15 +2,14 @@
 
 // App views part 2: Portfolio, Intelligence, Alerts, Settings (+admin).
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Bell, Check, KeyRound, LogOut, Plug, ShieldCheck, Sparkles, TrendingUp } from "lucide-react";
+import { AlertTriangle, ArrowRight, Bell, Check, KeyRound, LogOut, Plug, RefreshCw, Search, ShieldCheck, Sparkles, TrendingUp } from "lucide-react";
 import { AreaChart, CHART_COLORS, ConvictionDial, Donut } from "@/components/jexi/charts";
-import { Delta, EmptyState, KindDot, Panel, Pill, SectionTitle, Stat } from "@/components/jexi/bits";
+import { Delta, EmptyState, LiveDot, Panel, Pill, SectionTitle, Stat } from "@/components/jexi/bits";
 import {
   AccountInfo,
-  AdminOverview,
+  APP_VERSION,
   Profits,
   UNIVERSE,
-  demoThesis,
   fetchKeys,
   money,
   moneyCompact,
@@ -21,6 +20,8 @@ import {
   setServerUrl,
   symbolName,
   timeAgo,
+  useAdmin,
+  useAnalysis,
   useLocalList,
   useQuotes,
 } from "@/lib/jexi/data";
@@ -43,45 +44,63 @@ export function PortfolioView({ go, token, account, profits, isDemo }: {
 
   return (
     <div className="view-enter">
-      <SectionTitle sub={isDemo ? "demo data — sign in for the real thing" : `paper account · ${account?.mode || "paper"}`}>
+      <SectionTitle sub={isDemo ? "your account lives behind sign-in" : `paper account · ${account?.mode || "paper"}`}>
         Portfolio
       </SectionTitle>
 
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
         <Panel>
-          <div className="flex flex-wrap items-end justify-between gap-4">
-            <div>
+          {isDemo ? (
+            <div className="flex min-h-[280px] flex-col items-start justify-center">
               <div className="label">Total equity</div>
-              <div className="mt-1 flex items-baseline gap-3">
-                <span className="data text-[40px] leading-none tracking-tight">{money(account?.equity ?? 10000)}</span>
-                {account && <Delta value={account.pnlPct} size={15} />}
-              </div>
-              <div className="mt-1.5 text-[13px]" style={{ color: "var(--ink-3)" }}>
-                {account ? `${money(account.pnl)} since you started (${money(account.startingBalance, 0)} baseline)` : "Demo baseline $10,000"}
-              </div>
+              <div className="display mt-2 text-[28px] leading-snug">Your $10,000 paper account is one sign-in away</div>
+              <p className="mt-3 max-w-[440px] text-[13.5px] leading-relaxed" style={{ color: "var(--ink-2)" }}>
+                Create a free account with email or Google and JEXI opens a real paper account
+                instantly — equity curve, allocation, holdings and withdrawals all come from it,
+                live. No fake numbers here, just your data once it exists.
+              </p>
+              <button className="btn btn-primary mt-5" onClick={() => go("auth")}>
+                Create your account <ArrowRight size={15} />
+              </button>
             </div>
-            {!isDemo && profits && (
-              <div className="flex gap-6">
-                <Stat label="Total P&L" value={<span style={{ color: profits.totalPnl >= 0 ? "var(--up)" : "var(--down)" }}>{money(profits.totalPnl)}</span>} />
-                <Stat label="Win rate" value={`${profits.winRate}%`} sub={`${profits.wins}W · ${profits.losses}L`} />
-              </div>
-            )}
-          </div>
-          <div className="mt-5">
-            {profits?.equityCurve && profits.equityCurve.length > 3 ? (
-              <AreaChart data={profits.equityCurve.map((p) => p.equity)} height={220} fmt={(v) => money(v)} />
-            ) : (
-              <div className="flex items-center justify-center" style={{ height: 220 }}>
-                <div className="text-center">
-                  <Pill tone="brand">Demo</Pill>
-                  <p className="mx-auto mt-3 max-w-[380px] text-[13px] leading-relaxed" style={{ color: "var(--ink-3)" }}>
-                    The equity curve draws from your account&apos;s real snapshots. Sign in and let the
-                    engine run for a day — this panel fills with your history.
-                  </p>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-end justify-between gap-4">
+                <div>
+                  <div className="label">Total equity</div>
+                  <div className="mt-1 flex items-baseline gap-3">
+                    <span className="data text-[40px] leading-none tracking-tight">{money(account?.equity ?? 0)}</span>
+                    {account && <Delta value={account.pnlPct} size={15} />}
+                  </div>
+                  <div className="mt-1.5 text-[13px]" style={{ color: "var(--ink-3)" }}>
+                    {account
+                      ? `${money(account.pnl)} since you started (${money(account.startingBalance, 0)} baseline)`
+                      : "Syncing your account…"}
+                  </div>
                 </div>
+                {profits && (
+                  <div className="flex gap-6">
+                    <Stat label="Total P&L" value={<span style={{ color: profits.totalPnl >= 0 ? "var(--up)" : "var(--down)", fontSize: "15px" }}>{money(profits.totalPnl)}</span>} />
+                    <Stat label="Win rate" value={<span style={{ fontSize: "15px" }}>{`${profits.winRate}%`}</span>} sub={`${profits.wins}W · ${profits.losses}L`} />
+                  </div>
+                )}
               </div>
-            )}
-          </div>
+              <div className="mt-5">
+                {profits?.equityCurve && profits.equityCurve.length > 3 ? (
+                  <AreaChart data={profits.equityCurve.map((p) => p.equity)} height={220} fmt={(v) => money(v)} />
+                ) : (
+                  <div className="flex items-center justify-center" style={{ height: 220 }}>
+                    <div className="text-center">
+                      <p className="mx-auto mt-3 max-w-[380px] text-[13px] leading-relaxed" style={{ color: "var(--ink-3)" }}>
+                        The equity curve draws from your account&apos;s real snapshots. Let the
+                        engine run for a day — this panel fills with your history.
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
         </Panel>
 
         <div className="flex flex-col gap-4">
@@ -113,9 +132,21 @@ export function PortfolioView({ go, token, account, profits, isDemo }: {
 
       <Panel className="mt-4" pad={false}>
         <div className="flex items-center justify-between px-5 py-4">
-          <SectionTitle sub={isDemo ? "demo" : "live"}>Holdings</SectionTitle>
+          <SectionTitle sub={isDemo ? "members only" : "live"}>Holdings</SectionTitle>
         </div>
-        {positions.length ? (
+        {isDemo ? (
+          <div className="px-5 pb-6">
+            <EmptyState
+              title="Holdings belong to your account"
+              body="Sign in and every position the engine opens for you appears here with live P&L."
+              action={
+                <button className="btn btn-ghost" onClick={() => go("auth")}>
+                  Create your account
+                </button>
+              }
+            />
+          </div>
+        ) : positions.length ? (
           <div className="flex flex-col px-2 pb-2">
             {positions.map((p) => (
               <button key={p.symbol} className="row-link flex items-center justify-between rounded-xl px-3 py-3 text-left" onClick={() => go("asset", p.symbol)}>
@@ -146,11 +177,11 @@ export function PortfolioView({ go, token, account, profits, isDemo }: {
         ) : (
           <div className="px-5 pb-6">
             <EmptyState
-              title={isDemo ? "Demo has no holdings" : "No open positions yet"}
+              title="No open positions yet"
               body="JEXI buys only uptrends above the 10-day average, caps exposure at 6 positions, and draws a safety line under every trade."
               action={
-                <button className="btn btn-ghost" onClick={() => go(isDemo ? "auth" : "markets")}>
-                  {isDemo ? "Create your account" : "Explore markets"}
+                <button className="btn btn-ghost" onClick={() => go("markets")}>
+                  Explore markets
                 </button>
               }
             />
@@ -222,23 +253,23 @@ function WithdrawCard({ token, account, isDemo }: { token: string | null; accoun
 
 // ---------------- Intelligence ----------------
 
-const PIPELINE = [
-  { r: "RESEARCH ANALYST", role: "Fundamental analysis", pts: ["Business quality and moat", "Valuation vs. growth", "Balance-sheet strength"] },
-  { r: "TECHNICAL ANALYST", role: "Price and momentum", pts: ["Trend vs. 10-day average", "Volume confirmation", "Support and resistance map"] },
-  { r: "MACRO ANALYST", role: "Environment", pts: ["Rate path sensitivity", "Sector rotation context", "Liquidity conditions"] },
-  { r: "RISK ANALYST", role: "Downside first", pts: ["Worst case in dollars", "Correlation to holdings", "Exit lines drawn pre-entry"] },
-  { r: "NEWS ANALYST", role: "Events and catalysts", pts: ["Earnings timing", "Product and policy events", "Sentiment shifts"] },
-  { r: "VERIFIER", role: "Evidence check", pts: ["Data vs. interpretation split", "Conflicting evidence surfaced", "Confidence calibrated"] },
-];
+const DESK_ROLES: Record<string, string> = {
+  research: "Price structure and range",
+  technical: "Trend and momentum",
+  macro: "Market environment",
+  risk: "Downside, sized in numbers",
+  news: "Live headlines",
+  verifier: "Evidence check",
+};
 
 export function IntelligenceView({ go }: { go: Go }) {
-  const [watchlist] = useLocalList<string[]>("jexi.watchlist", ["NVDA", "AAPL", "MSFT", "TSLA"]);
+  const [watchlist] = useLocalList<string>("jexi.watchlist", ["NVDA", "AAPL", "MSFT", "TSLA"]);
   const [symbol, setSymbol] = useState(watchlist[0] || "NVDA");
-  const thesis = demoThesis(symbol);
+  const { analysis, loading, error } = useAnalysis(symbol);
 
   return (
     <div className="view-enter">
-      <SectionTitle sub="research → analysis → evidence → thesis">AI market intelligence</SectionTitle>
+      <SectionTitle sub="data → analysis → evidence → thesis · all computed live">Data intelligence</SectionTitle>
 
       <div className="mb-4 flex flex-wrap gap-2">
         {watchlist.map((s) => (
@@ -263,92 +294,160 @@ export function IntelligenceView({ go }: { go: Go }) {
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="flex flex-col gap-3 lg:col-span-2">
           <div className="grid gap-3 sm:grid-cols-2">
-            {PIPELINE.map((a, i) => (
-              <Panel key={a.r} className="p-4">
+            {(analysis?.desks || []).map((a, i) => (
+              <Panel key={a.label} className="p-4">
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-semibold tracking-[0.1em]" style={{ color: "var(--peach)" }}>
-                    {a.r}
+                    {a.label}
                   </span>
-                  <Pill tone="up">
-                    <Check size={11} /> done
+                  <Pill tone={a.status === "ok" ? "up" : a.status === "flag" ? "gold" : "neutral"}>
+                    {a.status === "ok" ? <><Check size={11} /> done</> : a.status === "flag" ? "caveat" : "unavailable"}
                   </Pill>
                 </div>
                 <div className="mt-1 text-[12px]" style={{ color: "var(--ink-3)" }}>
-                  {a.role}
+                  {DESK_ROLES[a.key] || ""}
                 </div>
-                <ul className="mt-2.5 flex flex-col gap-1.5">
-                  {a.pts.map((p) => (
-                    <li key={p} className="text-[12.5px]" style={{ color: "var(--ink-2)" }}>
+                <div className="mt-2.5 text-[12.5px] font-medium leading-relaxed" style={{ color: "var(--ink)" }}>
+                  {a.line}
+                </div>
+                <ul className="mt-2 flex flex-col gap-1.5">
+                  {a.points.slice(0, 3).map((p) => (
+                    <li key={p} className="text-[12px] leading-relaxed" style={{ color: "var(--ink-2)" }}>
                       · {p}
                     </li>
                   ))}
                 </ul>
                 <div className="mt-3 flex items-center gap-2">
                   <div className="h-1 flex-1 overflow-hidden rounded-full" style={{ background: "var(--panel-3)" }}>
-                    <div className="h-full rounded-full" style={{ width: `${88 + ((i * 7) % 12)}%`, background: "linear-gradient(90deg, var(--ember), var(--peach))" }} />
+                    <div className="h-full rounded-full" style={{ width: a.status === "ok" ? "100%" : "70%", background: "linear-gradient(90deg, var(--ember), var(--peach))" }} />
                   </div>
                   <span className="text-[10.5px]" style={{ color: "var(--ink-3)" }}>
-                    step {i + 1}/6
+                    desk {i + 1}/6
                   </span>
                 </div>
               </Panel>
             ))}
+            {loading && !analysis &&
+              [0, 1, 2, 3, 4, 5].map((i) => <Panel key={i} className="p-4"><div className="skeleton h-[110px] w-full" /></Panel>)}
           </div>
+          {error && !analysis && (
+            <Panel>
+              <EmptyState title="Desks could not run" body={error} />
+            </Panel>
+          )}
 
-          {/* thesis */}
-          <Panel>
-            <div className="flex items-center justify-between">
-              <SectionTitle sub={`on ${symbolName(symbol)}`}>Final thesis</SectionTitle>
-              <Pill tone="brand">Demo</Pill>
-            </div>
-            <div className="flex flex-wrap items-center gap-6">
-              <ConvictionDial value={thesis.conviction} size={110} />
-              <div className="min-w-[180px]">
-                <div className="label">Stance</div>
-                <div
-                  className="display text-[30px]"
-                  style={{ color: thesis.stance === "Bullish" ? "var(--up)" : thesis.stance === "Cautious" ? "var(--down)" : "var(--sand)" }}
-                >
-                  {thesis.stance}
-                </div>
-                <div className="mt-1 text-[12.5px]" style={{ color: "var(--ink-3)" }}>
-                  Last verified format demo · analysts involved: 6
+          {/* thesis — computed live */}
+          {analysis && (
+            <Panel>
+              <div className="flex items-center justify-between">
+                <SectionTitle sub={`on ${symbolName(symbol)} · ${analysis.metrics.closes} sessions analyzed`}>Data brief</SectionTitle>
+                <Pill tone="brand"><LiveDot /> live</Pill>
+              </div>
+              <div className="flex flex-wrap items-center gap-6">
+                <ConvictionDial value={analysis.conviction} size={110} />
+                <div className="min-w-[180px]">
+                  <div className="label">Stance</div>
+                  <div
+                    className="display text-[30px]"
+                    style={{ color: analysis.stance === "Bullish" ? "var(--up)" : analysis.stance === "Cautious" ? "var(--down)" : "var(--sand)" }}
+                  >
+                    {analysis.stance}
+                  </div>
+                  <div className="mt-1 text-[12.5px]" style={{ color: "var(--ink-3)" }}>
+                    Conviction {analysis.conviction}/100 · 6 desks + verifier
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="mt-5 grid gap-3 sm:grid-cols-3">
-              {[
-                { t: "Drivers", tone: "up", items: thesis.drivers },
-                { t: "Risks", tone: "down", items: thesis.risks },
-                { t: "Catalysts", tone: "brand", items: thesis.catalysts },
-              ].map((g) => (
-                <div key={g.t} className="panel-2 p-4">
-                  <div className="label mb-2" style={{ color: g.tone === "up" ? "var(--up)" : g.tone === "down" ? "var(--down)" : "var(--ember)" }}>
-                    {g.t}
+              <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                {[
+                  {
+                    t: "Supporting evidence",
+                    tone: "up",
+                    items: analysis.desks.filter((d) => d.key === "technical" || d.key === "research").flatMap((d) => d.points).slice(0, 3),
+                  },
+                  {
+                    t: "Opposing evidence",
+                    tone: "down",
+                    items: [...analysis.conflicts, ...analysis.desks.filter((d) => d.key === "risk").flatMap((d) => d.points)].slice(0, 3),
+                  },
+                  { t: "Levels to watch", tone: "brand", items: analysis.watch.map((w) => `${w.label}: ${priceFmt(w.value)}`) },
+                ].map((g) => (
+                  <div key={g.t} className="panel-2 p-4">
+                    <div className="label mb-2" style={{ color: g.tone === "up" ? "var(--up)" : g.tone === "down" ? "var(--down)" : "var(--ember)" }}>
+                      {g.t}
+                    </div>
+                    <ul className="flex flex-col gap-1.5">
+                      {g.items.map((it) => (
+                        <li key={it} className="text-[12.5px] leading-relaxed" style={{ color: "var(--ink-2)" }}>
+                          • {it}
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                  <ul className="flex flex-col gap-1.5">
-                    {g.items.map((it) => (
-                      <li key={it} className="text-[12.5px] leading-relaxed" style={{ color: "var(--ink-2)" }}>
-                        • {it}
-                      </li>
+                ))}
+              </div>
+              {analysis.news.length > 0 && (
+                <div className="mt-4">
+                  <div className="label mb-2">Latest headlines</div>
+                  <div className="flex flex-col gap-2">
+                    {analysis.news.slice(0, 3).map((h) => (
+                      <a
+                        key={h.link}
+                        href={h.link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="panel-2 row-link px-3.5 py-2.5 text-[12.5px] leading-snug"
+                        style={{ color: "var(--ink-2)" }}
+                      >
+                        <span style={{ color: "var(--ember)" }}>{h.publisher}</span> — {h.title}
+                      </a>
                     ))}
-                  </ul>
+                  </div>
                 </div>
-              ))}
-            </div>
-          </Panel>
+              )}
+              <p className="mt-4 text-[11.5px] leading-relaxed" style={{ color: "var(--ink-3)" }}>
+                {analysis.disclaimer}
+              </p>
+            </Panel>
+          )}
         </div>
 
-        {/* evidence + data honesty */}
+        {/* evidence ledger + data honesty — real values */}
         <div className="flex flex-col gap-4">
           <Panel>
             <div className="label mb-3">Evidence ledger</div>
             <div className="flex flex-col gap-3">
               {[
-                { k: "DATA", v: "Daily closes from the live server quote chain (Yahoo → Stooq fallback)", tone: "var(--up)" },
-                { k: "ANALYSIS", v: "Trend vs. 10-day average; regime from index proxy breadth", tone: "var(--peach)" },
-                { k: "INTERPRETATION", v: "Thesis stance and conviction — clearly separated from raw data", tone: "var(--ember)" },
-                { k: "CONFLICTS", v: "Bull vs. bear evidence shown side by side; nothing hidden", tone: "var(--gold)" },
+                {
+                  k: "DATA",
+                  v: analysis
+                    ? `${analysis.metrics.closes} daily closes from the live quote chain (Yahoo → Stooq fallback), latest ${priceFmt(analysis.price)}.`
+                    : "Waiting for the live quote chain…",
+                  tone: "var(--up)",
+                },
+                {
+                  k: "ANALYSIS",
+                  v: analysis
+                    ? `Trend: price ${analysis.metrics.sma10 !== null && analysis.price > analysis.metrics.sma10 ? "above" : "below"} 10-day average; ${analysis.metrics.upDays30} of last 30 sessions closed higher; ${analysis.metrics.ret30 !== null ? `30-session move ${analysis.metrics.ret30 > 0 ? "+" : ""}${analysis.metrics.ret30}%` : "momentum window warming up"}.`
+                    : "Computing from live closes…",
+                  tone: "var(--peach)",
+                },
+                {
+                  k: "INTERPRETATION",
+                  v: analysis
+                    ? `Stance ${analysis.stance} at conviction ${analysis.conviction}/100 — a transparent score, not a secret model.`
+                    : "Stance forms once data lands.",
+                  tone: "var(--ember)",
+                },
+                {
+                  k: "CONFLICTS",
+                  v: analysis
+                    ? analysis.conflicts.length
+                      ? analysis.conflicts.join(" ")
+                      : "Verifier found no contradictions across desks."
+                    : "Checked after desks report.",
+                  tone: "var(--gold)",
+                },
               ].map((e) => (
                 <div key={e.k} className="panel-2 px-3.5 py-3">
                   <div className="text-[10.5px] font-semibold tracking-[0.12em]" style={{ color: e.tone }}>
@@ -366,9 +465,13 @@ export function IntelligenceView({ go }: { go: Go }) {
               <ShieldCheck size={13} style={{ color: "var(--up)" }} /> Data honesty
             </div>
             <p className="text-[12.5px] leading-relaxed" style={{ color: "var(--ink-2)" }}>
-              Theses in this view demonstrate the format. Connect your AI key in Settings and JEXI
-              generates live, model-driven research for your watchlist — with the same structure,
-              the same evidence split, and no fabricated numbers.
+              {analysis
+                ? analysis.method
+                : "Every desk computes from real market data. Nothing here is mocked — when a feed is down, the desk says so instead of inventing numbers."}
+            </p>
+            <p className="mt-2 text-[12.5px] leading-relaxed" style={{ color: "var(--ink-2)" }}>
+              Want model-driven interpretation on top of this data? Connect your AI key in Settings
+              and JEXI adds it to the same evidence structure — clearly marked as generated.
             </p>
             <button className="btn btn-ghost mt-4 w-full" onClick={() => go("settings")}>
               <KeyRound size={15} /> Connect your AI key
@@ -393,7 +496,7 @@ interface Alert {
 export function AlertsView({ go }: { go: Go }) {
   const symbols = useMemo(() => UNIVERSE.map((u) => u.s), []);
   const { quotes } = useQuotes(symbols, 25000);
-  const [alerts, setAlerts] = useLocalList<Alert[]>("jexi.alerts", []);
+  const [alerts, setAlerts] = useLocalList<Alert>("jexi.alerts", []);
   const [symbol, setSymbol] = useState("AAPL");
   const [op, setOp] = useState<">" | "<">(">");
   const [price, setPrice] = useState("");
@@ -576,7 +679,7 @@ export function SettingsView({ go, token, user, isAdmin, signOut }: {
           ) : (
             <div className="flex items-center justify-between">
               <div className="text-[13.5px]" style={{ color: "var(--ink-2)" }}>
-                Browsing as guest — data is demo-only.
+                Browsing as guest — sign in to see your real account.
               </div>
               <button className="btn btn-primary" style={{ minHeight: 38 }} onClick={() => go("auth")}>
                 Sign in
@@ -607,6 +710,33 @@ export function SettingsView({ go, token, user, isAdmin, signOut }: {
             {health === "unknown" && <span style={{ color: "var(--ink-3)" }}>Default: the deployed Jexi server.</span>}
             {health === "checking" && <span style={{ color: "var(--ink-3)" }}>Checking…</span>}
           </div>
+        </Panel>
+
+        {/* legal + app version */}
+        <Panel>
+          <div className="label mb-3 flex items-center gap-2">
+            <ShieldCheck size={13} /> Legal &amp; app
+          </div>
+          <div className="flex flex-col gap-2">
+            <button className="row-link flex items-center justify-between rounded-lg px-1 py-1.5 text-[13.5px]" onClick={() => go("legal", "terms")}>
+              <span style={{ color: "var(--ink-2)" }}>Terms of Service</span>
+              <ArrowRight size={14} style={{ color: "var(--ink-3)" }} />
+            </button>
+            <button className="row-link flex items-center justify-between rounded-lg px-1 py-1.5 text-[13.5px]" onClick={() => go("legal", "privacy")}>
+              <span style={{ color: "var(--ink-2)" }}>Privacy Policy</span>
+              <ArrowRight size={14} style={{ color: "var(--ink-3)" }} />
+            </button>
+          </div>
+          <div className="mt-3 flex items-center justify-between border-t pt-3 text-[12.5px]" style={{ borderColor: "var(--line-soft)" }}>
+            <span style={{ color: "var(--ink-3)" }}>
+              App version <b className="data" style={{ color: "var(--ink-2)" }}>{APP_VERSION}</b>
+            </span>
+            <Pill tone="up">up to date</Pill>
+          </div>
+          <p className="mt-2 text-[11.5px] leading-relaxed" style={{ color: "var(--ink-3)" }}>
+            JEXI checks the server for newer versions automatically. If an update is required, an
+            &ldquo;Update your app&rdquo; screen appears before anything else.
+          </p>
         </Panel>
 
         {/* keys */}
@@ -673,16 +803,13 @@ export function SettingsView({ go, token, user, isAdmin, signOut }: {
 }
 
 function AdminPanel({ token }: { token: string | null }) {
-  const [overview, setOverview] = useState<AdminOverview | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const { overview, error: err, loading, reload } = useAdminSafe(token);
   const [tab, setTab] = useState<"users" | "trades" | "withdrawals">("users");
+  const [q, setQ] = useState("");
 
-  useEffect(() => {
-    if (!token) return;
-    import("@/lib/jexi/data").then((m) =>
-      m.api<AdminOverview>("/api/admin/overview", { token }).then(setOverview).catch((e) => setErr(e.message))
-    );
-  }, [token]);
+  const filteredUsers = (overview?.users || []).filter(
+    (u) => !q || u.email.toLowerCase().includes(q.toLowerCase()) || (u.name || "").toLowerCase().includes(q.toLowerCase())
+  );
 
   if (!token) return null;
   return (
@@ -691,22 +818,36 @@ function AdminPanel({ token }: { token: string | null }) {
         <div className="flex items-center gap-2.5">
           <Pill tone="gold"><ShieldCheck size={11} /> admin</Pill>
           <span className="text-[14px] font-semibold">Server control room</span>
+          <span className="text-[12px]" style={{ color: "var(--ink-3)" }}>
+            live from the database
+          </span>
         </div>
-        <div className="flex gap-1.5">
-          {(["users", "trades", "withdrawals"] as const).map((t) => (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className="rounded-lg px-3 py-1.5 text-[12.5px] capitalize"
-              style={{
-                background: tab === t ? "var(--panel-3)" : "transparent",
-                color: tab === t ? "var(--ink)" : "var(--ink-3)",
-                border: `1px solid ${tab === t ? "var(--line)" : "transparent"}`,
-              }}
-            >
-              {t}
-            </button>
-          ))}
+        <div className="flex items-center gap-2">
+          <button
+            className="btn btn-line"
+            style={{ minHeight: 32, paddingInline: 10 }}
+            onClick={reload}
+            aria-label="Refresh admin data"
+            title="Refresh"
+          >
+            <RefreshCw size={13} className={loading ? "animate-spin" : ""} />
+          </button>
+          <div className="flex gap-1.5">
+            {(["users", "trades", "withdrawals"] as const).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTab(t)}
+                className="rounded-lg px-3 py-1.5 text-[12.5px] capitalize"
+                style={{
+                  background: tab === t ? "var(--panel-3)" : "transparent",
+                  color: tab === t ? "var(--ink)" : "var(--ink-3)",
+                  border: `1px solid ${tab === t ? "var(--line)" : "transparent"}`,
+                }}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -718,31 +859,58 @@ function AdminPanel({ token }: { token: string | null }) {
 
       {overview && (
         <>
-          <div className="grid grid-cols-2 gap-4 border-t px-5 py-4 sm:grid-cols-4" style={{ borderColor: "var(--line-soft)" }}>
+          <div className="grid grid-cols-2 gap-4 border-t px-5 py-4 sm:grid-cols-3 lg:grid-cols-6" style={{ borderColor: "var(--line-soft)" }}>
             <Stat label="Users" value={overview.totals.users} />
             <Stat label="Total equity" value={money(overview.totals.equity)} />
             <Stat label="Cash on server" value={money(overview.totals.cash)} />
             <Stat label="In positions" value={money(overview.totals.positions)} />
+            <Stat label="All-time trades" value={overview.totals.trades} />
+            <Stat label="Open positions" value={overview.totals.openPositions} />
           </div>
 
           <div className="border-t px-2 pb-2" style={{ borderColor: "var(--line-soft)" }}>
             {tab === "users" && (
-              <div className="flex flex-col">
-                {overview.users.map((u) => (
-                  <div key={u.id} className="row-link flex items-center justify-between rounded-xl px-3 py-2.5">
-                    <div className="flex items-center gap-3">
-                      <span className="data text-[13.5px]">{u.email}</span>
-                      {u.isAdmin && <Pill tone="gold">admin</Pill>}
+              <div>
+                <div className="flex items-center gap-2.5 px-3 py-2.5">
+                  <Search size={14} style={{ color: "var(--ink-3)" }} />
+                  <input
+                    className="w-full bg-transparent text-[13.5px] outline-none placeholder:text-[var(--ink-3)]"
+                    placeholder={`Filter ${overview.totals.users} users by email or name…`}
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col">
+                  {filteredUsers.map((u) => (
+                    <div key={u.id} className="row-link flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-xl px-3 py-2.5">
+                      <div className="min-w-[180px]">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="data text-[13.5px]">{u.email}</span>
+                          {u.isAdmin && <Pill tone="gold">admin</Pill>}
+                        </div>
+                        <div className="text-[11.5px]" style={{ color: "var(--ink-3)" }}>
+                          {u.name || "—"} · joined {timeAgo(u.createdAt)}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-right">
+                        <span className="text-[11.5px]" style={{ color: "var(--ink-3)" }}>
+                          {u.positionsCount} pos · {u.tradesCount} trade{u.tradesCount === 1 ? "" : "s"}
+                          {u.lastTradeAt ? ` · last ${timeAgo(u.lastTradeAt)}` : ""}
+                        </span>
+                        <span className="data w-[86px] text-[13.5px]">{money(u.equity)}</span>
+                        <span className="data w-[86px] text-[13px]" style={{ color: u.pnl >= 0 ? "var(--up)" : "var(--down)" }}>
+                          {u.pnl >= 0 ? "+" : ""}
+                          {money(u.pnl)}
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-6 text-right">
-                      <span className="data text-[13.5px]">{money(u.equity)}</span>
-                      <span className="data w-[86px] text-[13px]" style={{ color: u.pnl >= 0 ? "var(--up)" : "var(--down)" }}>
-                        {u.pnl >= 0 ? "+" : ""}
-                        {money(u.pnl)}
-                      </span>
+                  ))}
+                  {!filteredUsers.length && (
+                    <div className="px-4 py-6 text-center text-[13px]" style={{ color: "var(--ink-3)" }}>
+                      No users match “{q}”.
                     </div>
-                  </div>
-                ))}
+                  )}
+                </div>
               </div>
             )}
             {tab === "trades" && (
@@ -760,6 +928,12 @@ function AdminPanel({ token }: { token: string | null }) {
                       <span className="data text-[13px]">
                         {t.qty} @ {priceFmt(t.price)}
                       </span>
+                      {Number.isFinite(t.pnl) && t.pnl !== 0 && (
+                        <span className="data text-[12.5px]" style={{ color: t.pnl >= 0 ? "var(--up)" : "var(--down)" }}>
+                          {t.pnl >= 0 ? "+" : ""}
+                          {money(t.pnl)}
+                        </span>
+                      )}
                       <span className="text-[11.5px]" style={{ color: "var(--ink-3)" }}>
                         {timeAgo(t.createdAt)}
                       </span>
@@ -778,6 +952,9 @@ function AdminPanel({ token }: { token: string | null }) {
                       <span className="text-[13px]" style={{ color: "var(--ink-2)" }}>
                         {w.email}
                       </span>
+                      <span className="text-[12px]" style={{ color: "var(--ink-3)" }}>
+                        via {w.method}
+                      </span>
                     </div>
                     <div className="flex items-center gap-5">
                       <span className="data text-[13.5px]">{money(w.amount)}</span>
@@ -795,9 +972,14 @@ function AdminPanel({ token }: { token: string | null }) {
       )}
       {!overview && !err && (
         <div className="flex items-center gap-2 px-5 pb-5 text-[13px]" style={{ color: "var(--ink-3)" }}>
-          <TrendingUp size={14} /> Loading control room…
+          <TrendingUp size={14} /> Loading control room from the live database…
         </div>
       )}
     </Panel>
   );
+}
+
+// thin wrapper so the admin panel can live inside SettingsView without prop drilling
+function useAdminSafe(token: string | null) {
+  return useAdmin(token, Boolean(token));
 }

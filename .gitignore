@@ -32,6 +32,8 @@ eggs/
 lib/
 !web/src/lib/
 !web/src/lib/**
+!mobile-app/src/lib/
+!mobile-app/src/lib/**
 lib64/
 parts/
 sdist/
@@ -104,3 +106,4 @@ docs/specs/
 /server/.env.local
 /mobile-app/webexport/
 /mobile-app/preview/
+server/tsconfig.tsbuildinfo

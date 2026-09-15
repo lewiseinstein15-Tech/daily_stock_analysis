@@ -1,23 +1,17 @@
 "use client";
 
-// JEXI Market shell: hash routing, top nav, mobile tab bar, ⌘K palette.
+// JEXI Market shell: hash routing, top nav, mobile tab bar, ⌘K palette, update gate.
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Bell, ChartCandlestick, LayoutDashboard, LineChart, PieChart, Search, Settings, Wallet, X } from "lucide-react";
+import { Bell, ChartCandlestick, LayoutDashboard, LineChart, PieChart, RefreshCw, Search, Settings, Wallet, X } from "lucide-react";
 import { JexiMark, Wordmark } from "@/components/jexi/brand";
 import { Pill } from "@/components/jexi/bits";
-import { AuthView, Footer, Landing } from "@/components/jexi/views-public";
+import { AuthView, Landing } from "@/components/jexi/views-public";
 import { AssetView, CommandView, MarketsView } from "@/components/jexi/views-app";
 import { AlertsView, IntelligenceView, PortfolioView, SettingsView } from "@/components/jexi/views-app2";
-import {
-  UNIVERSE,
-  useAccount,
-  useAuth,
-  useFeed,
-  useProfits,
-  DEMO_FEED,
-} from "@/lib/jexi/data";
+import { PrivacyView, TermsView } from "@/components/jexi/views-legal";
+import { APP_VERSION, UNIVERSE, useAccount, useAuth, useFeed, useProfits, useUpdateCheck } from "@/lib/jexi/data";
 
-type View = "landing" | "auth" | "command" | "markets" | "asset" | "portfolio" | "intelligence" | "alerts" | "settings";
+type View = "landing" | "auth" | "command" | "markets" | "asset" | "portfolio" | "intelligence" | "alerts" | "settings" | "legal";
 
 const NAV: { id: View; label: string; icon: React.ReactNode }[] = [
   { id: "command", label: "Command", icon: <LayoutDashboard size={17} /> },
@@ -27,7 +21,7 @@ const NAV: { id: View; label: string; icon: React.ReactNode }[] = [
   { id: "alerts", label: "Alerts", icon: <Bell size={17} /> },
 ];
 
-function parseHash(): { view: View; symbol?: string } {
+function parseHash(): { view: View; symbol?: string; doc?: string } {
   const h = window.location.hash.replace(/^#\/?/, "");
   if (!h) return { view: "landing" };
   const [head, tail] = h.split("/");
@@ -48,18 +42,22 @@ function parseHash(): { view: View; symbol?: string } {
       return { view: "alerts" };
     case "settings":
       return { view: "settings" };
+    case "legal":
+      return { view: "legal", doc: tail === "privacy" ? "privacy" : "terms" };
     default:
       return { view: "landing" };
   }
 }
 
 export function JexiApp() {
-  const [{ view, symbol }, setRoute] = useState<{ view: View; symbol?: string }>({ view: "landing" });
+  const [{ view, symbol, doc }, setRoute] = useState<{ view: View; symbol?: string; doc?: string }>({ view: "landing" });
   const { user, token, ready, isAdmin, signOut } = useAuth();
   const { account } = useAccount(token);
   const liveFeed = useFeed(token);
   const profits = useProfits(token);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const update = useUpdateCheck();
+  const [updateDismissed, setUpdateDismissed] = useState(false);
 
   useEffect(() => {
     // defer the first hash read so we never setState synchronously inside the effect
@@ -91,7 +89,7 @@ export function JexiApp() {
   }, []);
 
   const connected = Boolean(token);
-  const feed = connected ? liveFeed : DEMO_FEED;
+  const feed = liveFeed;
 
   const nav = (v: string, s?: string) => go(v, s);
 
@@ -99,6 +97,7 @@ export function JexiApp() {
     if (!ready) return <div className="p-10" />;
     if (view === "landing") return <Landing go={nav} />;
     if (view === "auth") return user ? <CommandView go={nav} token={token} account={account} feed={feed} isDemo={!connected} /> : <AuthView go={nav} />;
+    if (view === "legal") return doc === "privacy" ? <PrivacyView go={nav} /> : <TermsView go={nav} />;
 
     const shared = { go: nav, token, account, feed, isDemo: !connected };
     switch (view) {
@@ -119,7 +118,7 @@ export function JexiApp() {
       default:
         return <Landing go={nav} />;
     }
-  }, [ready, view, symbol, user, token, account, feed, profits, connected, isAdmin, nav, signOut]);
+  }, [ready, view, symbol, doc, user, token, account, feed, profits, connected, isAdmin, nav, signOut]);
 
   return (
     <div className="min-h-screen">
@@ -180,10 +179,59 @@ export function JexiApp() {
         </div>
       </header>
 
+      {/* required update = full gate, optional = dismissible banner */}
+      {update.status === "required" && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center px-5" style={{ background: "rgba(10,8,6,.94)", backdropFilter: "blur(8px)" }}>
+          <div className="panel max-w-md p-8 text-center" style={{ animation: "jexi-rise 200ms var(--ease) both" }}>
+            <JexiMark size={54} />
+            <h2 className="display mt-5 text-[26px]">Update your app</h2>
+            <p className="mt-2.5 text-[13.5px] leading-relaxed" style={{ color: "var(--ink-2)" }}>
+              You are running JEXI {APP_VERSION}, but version {update.info?.minRequired || ""} or newer is
+              required to keep everything working correctly.
+            </p>
+            {update.info?.notes && (
+              <p className="mt-2 text-[12.5px]" style={{ color: "var(--ink-3)" }}>
+                What&apos;s new: {update.info.notes}
+              </p>
+            )}
+            <button className="btn btn-primary mt-6 w-full" onClick={() => window.location.reload()}>
+              <RefreshCw size={15} /> Update now
+            </button>
+            {update.info?.url && (
+              <a
+                href={update.info.url}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-3 block text-[12.5px] underline-offset-2 hover:underline"
+                style={{ color: "var(--ink-3)" }}
+              >
+                Or download the latest version
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+      {update.status === "optional" && !updateDismissed && (
+        <div
+          className="sticky top-[64px] z-30 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-5 py-2.5 text-[13px]"
+          style={{ background: "color-mix(in srgb, var(--ember) 12%, var(--bg))", borderBottom: "1px solid var(--line-soft)", color: "var(--ink-2)" }}
+        >
+          <span>
+            JEXI <b style={{ color: "var(--ink)" }}>{update.info?.latest}</b> is available — you are on {APP_VERSION}.
+          </span>
+          <button className="row-link inline-flex items-center gap-1.5 font-semibold" style={{ color: "var(--ember)" }} onClick={() => window.location.reload()}>
+            <RefreshCw size={13} /> Update now
+          </button>
+          <button aria-label="Dismiss update banner" onClick={() => setUpdateDismissed(true)} style={{ color: "var(--ink-3)" }}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       <main className="relative mx-auto w-full max-w-6xl px-5 pb-28 pt-6 md:pb-14">{content}</main>
 
       {/* mobile tab bar */}
-      {view !== "landing" && view !== "auth" && (
+      {view !== "landing" && view !== "auth" && view !== "legal" && (
         <nav
           className="fixed inset-x-0 bottom-0 z-40 flex items-center justify-around border-t px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden"
           style={{ borderColor: "var(--line-soft)", background: "color-mix(in srgb, var(--bg) 90%, transparent)" }}

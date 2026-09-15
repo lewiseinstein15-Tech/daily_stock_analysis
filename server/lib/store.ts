@@ -80,6 +80,12 @@ export interface AdminUserRow {
   position_value: number;
 }
 
+// Per-user activity aggregates for the admin control room.
+export interface AdminActivity {
+  trades: Record<string, { n: number; lastAt: string }>;
+  positions: Record<string, number>;
+}
+
 export function startingBalance(): number {
   const n = Number(process.env.STARTING_BALANCE || 10000);
   return Number.isFinite(n) && n > 0 ? n : 10000;
@@ -222,6 +228,22 @@ class MemoryStore {
   }
   async listAccountUserIds(): Promise<number[]> {
     return [...this.accounts.keys()];
+  }
+  async adminActivity(): Promise<AdminActivity> {
+    const trades: Record<string, { n: number; lastAt: string }> = {};
+    for (const t of this.trades) {
+      const cur = trades[String(t.user_id)];
+      if (!cur) trades[String(t.user_id)] = { n: 1, lastAt: t.created_at };
+      else {
+        cur.n += 1;
+        if (t.created_at > cur.lastAt) cur.lastAt = t.created_at;
+      }
+    }
+    const positions: Record<string, number> = {};
+    for (const p of this.positions) {
+      positions[String(p.user_id)] = (positions[String(p.user_id)] || 0) + 1;
+    }
+    return { trades, positions };
   }
   async listUsersWithAccounts(limit = 200): Promise<AdminUserRow[]> {
     const posValue = new Map<number, number>();
@@ -386,6 +408,19 @@ class D1Store {
   async listAccountUserIds(): Promise<number[]> {
     const r = await d1Query<{ user_id: number }>("SELECT user_id FROM accounts ORDER BY user_id LIMIT 500");
     return r.rows.map((row) => Number(row.user_id));
+  }
+  async adminActivity(): Promise<AdminActivity> {
+    const t = await d1Query<{ user_id: number; n: number; lastAt: string }>(
+      "SELECT user_id, COUNT(*) AS n, MAX(created_at) AS lastAt FROM trades GROUP BY user_id"
+    );
+    const p = await d1Query<{ user_id: number; n: number }>(
+      "SELECT user_id, COUNT(*) AS n FROM positions GROUP BY user_id"
+    );
+    const trades: Record<string, { n: number; lastAt: string }> = {};
+    for (const row of t.rows) trades[String(row.user_id)] = { n: Number(row.n), lastAt: String(row.lastAt) };
+    const positions: Record<string, number> = {};
+    for (const row of p.rows) positions[String(row.user_id)] = Number(row.n);
+    return { trades, positions };
   }
   async listUsersWithAccounts(limit = 200): Promise<AdminUserRow[]> {
     const r = await d1Query<AdminUserRow>(

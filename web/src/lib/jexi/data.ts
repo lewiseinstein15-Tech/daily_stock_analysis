@@ -111,7 +111,7 @@ export interface Profits {
   equityCurve: { created_at: string; equity: number }[];
 }
 export interface AdminOverview {
-  totals: { users: number; equity: number; cash: number; positions: number };
+  totals: { users: number; equity: number; cash: number; positions: number; trades: number; openPositions: number };
   users: {
     id: number;
     email: string;
@@ -121,10 +121,181 @@ export interface AdminOverview {
     positionValue: number;
     equity: number;
     pnl: number;
+    tradesCount: number;
+    positionsCount: number;
+    lastTradeAt: string | null;
     createdAt: string;
   }[];
   recentTrades: { id: number; email: string; symbol: string; side: string; qty: number; price: number; pnl: number; createdAt: string }[];
   withdrawals: { id: number; email: string; amount: number; method: string; status: string; createdAt: string }[];
+}
+
+// ---------------- app version + update check ----------------
+
+export const APP_VERSION = "1.2.0";
+
+export interface VersionInfo {
+  latest: string;
+  minRequired: string;
+  notes: string;
+  url: string;
+}
+
+function compareSemver(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+export function useUpdateCheck(pollMs = 30 * 60_000): {
+  status: "ok" | "optional" | "required" | "offline";
+  info: VersionInfo | null;
+} {
+  const [state, setState] = useState<{ status: "ok" | "optional" | "required" | "offline"; info: VersionInfo | null }>({
+    status: "ok",
+    info: null,
+  });
+  useEffect(() => {
+    let alive = true;
+    const check = () => {
+      api<VersionInfo & { ok: boolean }>("/api/version")
+        .then((r) => {
+          if (!alive) return;
+          const behindLatest = compareSemver(APP_VERSION, r.latest) < 0;
+          const behindMin = compareSemver(APP_VERSION, r.minRequired) < 0;
+          setState({
+            status: behindMin ? "required" : behindLatest ? "optional" : "ok",
+            info: { latest: r.latest, minRequired: r.minRequired, notes: r.notes, url: r.url },
+          });
+        })
+        .catch(() => alive && setState((s) => (s.status === "required" ? s : { status: "offline", info: null })));
+    };
+    check();
+    const id = setInterval(check, pollMs);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [pollMs]);
+  return state;
+}
+
+// ---------------- real market wire (guest activity, computed from live quotes) ----------------
+
+export function marketWire(quotes: Quotes): FeedEvent[] {
+  const entries = Object.entries(quotes).filter(([, q]) => Number.isFinite(q.changePct || NaN));
+  if (!entries.length) return [];
+  const sorted = [...entries].sort((a, b) => (b[1].changePct || 0) - (a[1].changePct || 0));
+  const top = sorted[0];
+  const bottom = sorted[sorted.length - 1];
+  const spy = quotes["SPY"];
+  const btc = quotes["BTC-USD"];
+  const wire: FeedEvent[] = [];
+  let id = -1;
+  const push = (kind: string, message: string) => wire.push({ id: id--, kind, message, created_at: new Date().toISOString() });
+  if (top && (top[1].changePct || 0) > 0.05) {
+    push(
+      "info",
+      `${top[0].replace("-USD", "")} leads the watch universe at ${priceFmt(top[1].price)} (${pct(top[1].changePct || 0)} today).`
+    );
+  }
+  if (bottom && top[0] !== bottom[0] && (bottom[1].changePct || 0) < -0.05) {
+    push(
+      "warn",
+      `${bottom[0].replace("-USD", "")} is the weakest at ${priceFmt(bottom[1].price)} (${pct(bottom[1].changePct || 0)} today).`
+    );
+  }
+  if (spy) {
+    push(
+      "info",
+      `S&P 500 proxy (SPY) trades at ${priceFmt(spy.price)}, ${pct(spy.changePct || 0)} on the session.`
+    );
+  }
+  if (btc) {
+    push("info", `Bitcoin changes hands at ${priceFmt(btc.price)} (${pct(btc.changePct || 0)}), 24/7 market.`);
+  }
+  push("info", "Sign in and this wire becomes your personal trading log — every buy, sell and safety line, in plain English.");
+  return wire;
+}
+
+// ---------------- data-driven brief hook (replaces demo theses) ----------------
+
+export interface DeskBrief {
+  key: string;
+  label: string;
+  status: string;
+  line: string;
+  points: string[];
+}
+
+export interface AnalysisResult {
+  symbol: string;
+  price: number;
+  changePct: number | null;
+  stance: "Bullish" | "Cautious" | "Neutral";
+  stanceTone: "up" | "down" | "neutral";
+  conviction: number;
+  metrics: {
+    closes: number;
+    sma10: number | null;
+    sma20: number | null;
+    sma50: number | null;
+    high90: number;
+    low90: number;
+    rangePos: number;
+    ret10: number | null;
+    ret30: number | null;
+    volAnn: number;
+    maxDrawdown: number;
+    upDays30: number;
+    spyCorrelation: number | null;
+  };
+  desks: DeskBrief[];
+  watch: { label: string; value: number }[];
+  news: { title: string; publisher: string; link: string }[];
+  conflicts: string[];
+  method: string;
+  disclaimer: string;
+  asOf: string;
+}
+
+export function useAnalysis(symbol: string, pollMs = 60_000): {
+  analysis: AnalysisResult | null;
+  loading: boolean;
+  error: string | null;
+} {
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!symbol) return;
+    let alive = true;
+    setLoading(true);
+    setError(null);
+    const load = () =>
+      api<AnalysisResult & { ok: boolean }>(`/api/analysis?symbol=${encodeURIComponent(symbol)}`)
+        .then((r) => {
+          if (!alive) return;
+          setAnalysis(r);
+          setLoading(false);
+        })
+        .catch((e) => {
+          if (!alive) return;
+          setError((e as Error).message);
+          setLoading(false);
+        });
+    load();
+    const id = setInterval(load, pollMs);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [symbol, pollMs]);
+  return { analysis, loading, error };
 }
 
 // ---------------- symbol universe ----------------
@@ -392,13 +563,22 @@ export function useProfits(token: string | null, pollMs = 30000) {
 export function useAdmin(token: string | null, enabled: boolean) {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
+  const [loading, setLoading] = useState(false);
+  const load = useCallback(() => {
     if (!token || !enabled) return;
+    setLoading(true);
     api<AdminOverview>("/api/admin/overview", { token })
-      .then(setOverview)
-      .catch((e) => setError((e as Error).message));
+      .then((r) => {
+        setOverview(r);
+        setError(null);
+      })
+      .catch((e) => setError((e as Error).message))
+      .finally(() => setLoading(false));
   }, [token, enabled]);
-  return { overview, error };
+  useEffect(() => {
+    load();
+  }, [load]);
+  return { overview, error, loading, reload: load };
 }
 
 // ---------------- actions ----------------
@@ -456,87 +636,9 @@ export function useLocalList<T>(storageKey: string, initial: T[]) {
   return [items, setItems] as const;
 }
 
-// ---------------- demo content (labeled Demo in UI) ----------------
+// ---------------- legal content ----------------
 
-export const DEMO_FEED: FeedEvent[] = [
-  {
-    id: -3,
-    kind: "info",
-    message:
-      "Demo feed: this is what JEXI's plain-English trading log looks like. Sign in to make it real.",
-    created_at: new Date(Date.now() - 9 * 60000).toISOString(),
-  },
-  {
-    id: -2,
-    kind: "win",
-    message:
-      "Sold 12 NVDA at $218.40 for a gain of $410.20. Reason: take profit reached (bought at $184.20).",
-    created_at: new Date(Date.now() - 52 * 60000).toISOString(),
-  },
-  {
-    id: -1,
-    kind: "info",
-    message:
-      "Bought 7 AAPL at $332.10 (about $2,324.70). Reason: trading above its 10-day average and still climbing.",
-    created_at: new Date(Date.now() - 140 * 60000).toISOString(),
-  },
-];
-
-export const DEMO_POSITIONS: Position[] = [
-  { symbol: "AAPL", qty: 7, avgPrice: 332.1, lastPrice: 333.08, value: 2331.56, pnl: 6.86, openedAt: "" },
-  { symbol: "MSFT", qty: 4, avgPrice: 508.4, lastPrice: 505.2, value: 2020.8, pnl: -12.8, openedAt: "" },
-];
-
-export interface ThesisContent {
-  stance: "Bullish" | "Cautious" | "Neutral";
-  conviction: number;
-  drivers: string[];
-  risks: string[];
-  catalysts: string[];
-}
-
-export function demoThesis(symbol: string): ThesisContent {
-  const specific: Record<string, ThesisContent> = {
-    NVDA: {
-      stance: "Bullish",
-      conviction: 78,
-      drivers: [
-        "Data-center revenue trajectory remains the strongest in mega-cap tech",
-        "Accelerated-compute demand from AI infrastructure buildouts",
-        "Software ecosystem lock-in widens the moat each quarter",
-      ],
-      risks: [
-        "Valuation already prices in years of flawless execution",
-        "Custom silicon from hyperscalers competes at the high end",
-        "Export controls create revenue concentration risk",
-      ],
-      catalysts: ["Quarterly earnings", "Next-gen product ramp", "Hyperscaler capex guides"],
-    },
-    AAPL: {
-      stance: "Neutral",
-      conviction: 62,
-      drivers: ["Services margin expansion", "Install-base loyalty", "Capital return program"],
-      risks: ["Hardware cycle saturation in mature markets", "China demand swings"],
-      catalysts: ["Product launches", "Earnings", "Services disclosures"],
-    },
-    TSLA: {
-      stance: "Cautious",
-      conviction: 58,
-      drivers: ["Energy storage growth", "Full-self-driving optionality"],
-      risks: ["Margin compression from price cuts", "Demand elasticity at scale", "Key-person risk"],
-      catalysts: ["Delivery numbers", "Margin updates", "Autonomy milestones"],
-    },
-  };
-  return (
-    specific[symbol] || {
-      stance: "Neutral",
-      conviction: 55,
-      drivers: ["Sector momentum", "Balance-sheet quality", "Liquidity profile"],
-      risks: ["Multiple expansion vs. growth", "Macro rate sensitivity"],
-      catalysts: ["Quarterly earnings", "Sector policy shifts"],
-    }
-  );
-}
+export const LEGAL_UPDATED = "September 15, 2026";
 
 export function briefingFromQuotes(quotes: Quotes): {
   regime: string;

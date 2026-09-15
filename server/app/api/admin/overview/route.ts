@@ -10,10 +10,11 @@ export async function GET(req: Request) {
   const me = await store.getUserById(auth.uid);
   if (!me || !me.is_admin) return bad("Admin access required.", 403);
 
-  const [users, recentTrades, withdrawals] = await Promise.all([
+  const [users, recentTrades, withdrawals, activity] = await Promise.all([
     store.listUsersWithAccounts(200),
     store.listRecentTradesAll(20),
     store.listWithdrawalsAll(20),
+    store.adminActivity(),
   ]);
 
   const totals = users.reduce(
@@ -25,6 +26,8 @@ export async function GET(req: Request) {
     },
     { equity: 0, cash: 0, positions: 0 }
   );
+  const totalTrades = Object.values(activity.trades).reduce((s, t) => s + t.n, 0);
+  const totalPositions = Object.values(activity.positions).reduce((s, n) => s + n, 0);
 
   return ok({
     totals: {
@@ -32,6 +35,8 @@ export async function GET(req: Request) {
       equity: Math.round(totals.equity * 100) / 100,
       cash: Math.round(totals.cash * 100) / 100,
       positions: Math.round(totals.positions * 100) / 100,
+      trades: totalTrades,
+      openPositions: totalPositions,
     },
     users: users.map((u) => ({
       id: u.id,
@@ -42,6 +47,9 @@ export async function GET(req: Request) {
       positionValue: Math.round(u.position_value * 100) / 100,
       equity: Math.round((u.cash + u.position_value) * 100) / 100,
       pnl: Math.round((u.cash + u.position_value - u.starting_balance) * 100) / 100,
+      tradesCount: activity.trades[String(u.id)]?.n || 0,
+      positionsCount: activity.positions[String(u.id)] || 0,
+      lastTradeAt: activity.trades[String(u.id)]?.lastAt || null,
       createdAt: u.created_at,
     })),
     recentTrades: recentTrades.map((t) => ({
