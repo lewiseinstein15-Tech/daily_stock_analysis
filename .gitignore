@@ -112,3 +112,5 @@ server/tsconfig.tsbuildinfo
 
 .vercel/
 .env*.local
+.vercel
+.env*
