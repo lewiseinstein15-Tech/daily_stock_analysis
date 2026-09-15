@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-nati
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useJexi } from '../lib/store';
-import { C } from '../lib/theme';
+import { C, F } from '../lib/theme';
 import { Btn, Orb, Sub } from '../components/ui';
 
 export default function Welcome() {
@@ -66,14 +66,14 @@ const s = StyleSheet.create({
   fill: { flex: 1, backgroundColor: C.bg },
   wrap: { paddingHorizontal: 24, flexGrow: 1 },
   hero: { alignItems: 'center', marginTop: 40 },
-  title: { color: C.text, fontSize: 34, fontWeight: '900', marginTop: 20 },
-  subtitle: { color: C.sub, fontSize: 15, textAlign: 'center', marginTop: 10, lineHeight: 22 },
+  title: { color: C.text, fontFamily: F.display, fontSize: 36, fontWeight: '600', letterSpacing: -0.8, marginTop: 20 },
+  subtitle: { color: C.sub, fontSize: 15, textAlign: 'center', marginTop: 10, lineHeight: 22, fontFamily: F.ui },
   points: { marginTop: 34, gap: 14 },
   point: { flexDirection: 'row', gap: 14, backgroundColor: C.card, borderRadius: 16, borderWidth: 1, borderColor: C.border, padding: 14 },
   pointIcon: { fontSize: 24 },
   pointBody: { flex: 1 },
-  pointTitle: { color: C.text, fontSize: 15, fontWeight: '800' },
-  pointDesc: { color: C.sub, fontSize: 13, marginTop: 3, lineHeight: 19 },
+  pointTitle: { color: C.text, fontSize: 15, fontWeight: '700', fontFamily: F.ui },
+  pointDesc: { color: C.sub, fontSize: 13, marginTop: 3, lineHeight: 19, fontFamily: F.ui },
   spacer: { flex: 1, minHeight: 24 },
   demoLink: { textAlign: 'center', marginTop: 16, color: C.brand, fontWeight: '700' },
   foot: { textAlign: 'center', marginTop: 10, fontSize: 11, color: C.faint },

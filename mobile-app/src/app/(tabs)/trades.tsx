@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useJexi, Trade } from '../../lib/store';
-import { C } from '../../lib/theme';
+import { C, F } from '../../lib/theme';
 import { money, ago } from '../../lib/format';
 import { Card, Pill, Row, SectionTitle, Sub } from '../../components/ui';
 
@@ -104,7 +104,7 @@ export default function Trades() {
 const s = StyleSheet.create({
   fill: { flex: 1, backgroundColor: C.bg },
   wrap: { paddingHorizontal: 20, paddingBottom: 24, gap: 12 },
-  title: { color: C.text, fontSize: 28, fontWeight: '900' },
+  title: { color: C.text, fontFamily: F.display, fontSize: 30, fontWeight: '600', letterSpacing: -0.5 },
   lead: { lineHeight: 19, marginTop: -6 },
   back: { color: C.brand, fontWeight: '800', fontSize: 15 },
   chip: { paddingHorizontal: 14, paddingVertical: 7, borderRadius: 999, borderWidth: 1, borderColor: C.border },
@@ -115,13 +115,13 @@ const s = StyleSheet.create({
   sideBadge: { paddingHorizontal: 9, paddingVertical: 5, borderRadius: 8 },
   sideText: { fontSize: 11.5, fontWeight: '900' },
   tradeMid: { flex: 1 },
-  tradeSym: { color: C.text, fontWeight: '800', fontSize: 15 },
+  tradeSym: { color: C.text, fontWeight: '700', fontSize: 15, fontFamily: F.ui },
   tradeRight: { alignItems: 'flex-end' },
-  tradeVal: { color: C.text, fontWeight: '800', fontSize: 14.5 },
-  bigSym: { color: C.text, fontSize: 26, fontWeight: '900' },
+  tradeVal: { color: C.text, fontWeight: '700', fontSize: 14.5, fontFamily: F.data },
+  bigSym: { color: C.text, fontFamily: F.display, fontSize: 28, fontWeight: '600', letterSpacing: -0.4 },
   detailGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: 16, gap: 14 },
   detailItem: { width: '47%' },
-  detailVal: { color: C.text, fontWeight: '800', fontSize: 15, marginTop: 2 },
+  detailVal: { color: C.text, fontWeight: '700', fontSize: 15, marginTop: 2, fontFamily: F.data },
   reason: { color: C.text, fontSize: 15, lineHeight: 23 },
   footNote: { color: C.faint, textAlign: 'center', marginBottom: 8 },
 });

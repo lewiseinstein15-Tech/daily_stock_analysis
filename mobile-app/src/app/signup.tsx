@@ -3,7 +3,7 @@ import { View, Text, TextInput, StyleSheet, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useJexi } from '../lib/store';
-import { C } from '../lib/theme';
+import { C, F } from '../lib/theme';
 import { Btn, Card, Sub } from '../components/ui';
 
 export default function Signup() {
@@ -65,7 +65,7 @@ export default function Signup() {
 const s = StyleSheet.create({
   fill: { flex: 1, backgroundColor: C.bg },
   wrap: { paddingHorizontal: 24, flexGrow: 1 },
-  title: { color: C.text, fontSize: 30, fontWeight: '900', marginTop: 12 },
+  title: { color: C.text, fontFamily: F.display, fontSize: 32, fontWeight: '600', letterSpacing: -0.6, marginTop: 12 },
   lead: { marginTop: 8, lineHeight: 20 },
   form: { marginTop: 22, gap: 6 },
   label: { color: C.sub, fontSize: 13, fontWeight: '700', marginTop: 10 },

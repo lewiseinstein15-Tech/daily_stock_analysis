@@ -2,14 +2,22 @@ import React, { useEffect } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useFonts } from 'expo-font';
 import { useJexi } from '../lib/store';
-import { C } from '../lib/theme';
 import { useUpdateGate } from '../lib/update';
 import { UpdateGate } from '../lib/update-ui';
+import { C } from '../lib/theme';
 
 export default function RootLayout() {
   const boot = useJexi((s) => s.boot);
   const update = useUpdateGate();
+
+  // The exact same variable fonts the JEXI Market web app uses.
+  const [fontsReady] = useFonts({
+    Fraunces: require('../../assets/fonts/Fraunces-var.ttf'),
+    Inter: require('../../assets/fonts/Inter-var.ttf'),
+    'JetBrains Mono': require('../../assets/fonts/JetBrainsMono-var.ttf'),
+  });
 
   useEffect(() => {
     boot();
@@ -18,6 +26,10 @@ export default function RootLayout() {
   // Server says this version is too old: show the full-screen update gate.
   if (update.status === 'required') {
     return <UpdateGate info={update.info} />;
+  }
+
+  if (!fontsReady) {
+    return <View style={s.root} />;
   }
 
   return (

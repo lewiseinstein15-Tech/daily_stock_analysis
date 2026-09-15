@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { View, Text, StyleSheet, Dimensions } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { C } from '../lib/theme';
+import { C, F } from '../lib/theme';
 import { Btn, Sub } from '../components/ui';
 
 const SLIDES: Array<{ emoji: string; title: string; body: string }> = [
@@ -66,7 +66,7 @@ const s = StyleSheet.create({
   dotOn: { backgroundColor: C.brand, width: 22 },
   body: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 8, maxWidth: W },
   emoji: { fontSize: 64, marginBottom: 18 },
-  title: { color: C.text, fontSize: 30, fontWeight: '900', textAlign: 'center' },
+  title: { color: C.text, fontFamily: F.display, fontSize: 32, fontWeight: '600', letterSpacing: -0.6, textAlign: 'center' },
   text: { color: C.sub, fontSize: 16, lineHeight: 25, textAlign: 'center', marginTop: 14 },
   foot: { gap: 14 },
   footBtns: { flexDirection: 'row', gap: 10, alignItems: 'center', justifyContent: 'flex-end' },

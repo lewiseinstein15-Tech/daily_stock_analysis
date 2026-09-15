@@ -16,7 +16,7 @@ import { useCallback, useEffect, useState } from 'react';
 // Keep in sync with the web app's DEFAULT_SERVER and the app's settings screen.
 export const DEFAULT_SERVER = 'https://jexi-server.vercel.app';
 
-export const APP_VERSION = '1.2.0';
+export const APP_VERSION = '1.3.0';
 
 export interface VersionInfo {
   latest: string;

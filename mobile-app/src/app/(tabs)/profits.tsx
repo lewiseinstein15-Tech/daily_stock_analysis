@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useJexi } from '../../lib/store';
-import { C } from '../../lib/theme';
+import { C, F } from '../../lib/theme';
 import { money, pct } from '../../lib/format';
 import { Card, Pill, Row, SectionTitle, Sub, Btn } from '../../components/ui';
 import { Bars } from '../../components/charts';
@@ -78,14 +78,14 @@ export default function Profits() {
 const s = StyleSheet.create({
   fill: { flex: 1, backgroundColor: C.bg },
   wrap: { paddingHorizontal: 20, paddingBottom: 24, gap: 14 },
-  title: { color: C.text, fontSize: 28, fontWeight: '900' },
+  title: { color: C.text, fontFamily: F.display, fontSize: 30, fontWeight: '600', letterSpacing: -0.5 },
   lead: { lineHeight: 19, marginTop: -6 },
-  big: { fontSize: 36, fontWeight: '900' },
+  big: { fontSize: 34, fontWeight: '700', fontFamily: F.data, letterSpacing: -0.5 },
   legend: { gap: 16, marginTop: 10 },
   box: { width: 10, height: 10, borderRadius: 3 },
   stats: { flexDirection: 'row', gap: 12, marginTop: -4 },
   stat: { flex: 1, gap: 3 },
-  statVal: { color: C.text, fontSize: 22, fontWeight: '900' },
-  ruleTitle: { color: C.text, fontSize: 14, fontWeight: '800' },
+  statVal: { color: C.text, fontSize: 22, fontWeight: '700', fontFamily: F.data },
+  ruleTitle: { color: C.text, fontSize: 14, fontWeight: '700', fontFamily: F.ui },
   ruleText: { marginTop: 6, lineHeight: 20 },
 });

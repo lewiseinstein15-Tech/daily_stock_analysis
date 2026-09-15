@@ -29,3 +29,13 @@ export const C = {
 
 /** Global corner radius (matches --radius on the web). */
 export const R = 14;
+
+/** Font families — the same variable fonts the JEXI Market web app uses. */
+export const F = {
+  display: 'Fraunces',      // serif headlines ("The market, explained.")
+  ui: 'Inter',              // everything else
+  data: 'JetBrains Mono',   // numbers, tickers
+} as const;
+
+/** Brand gradient for primary buttons (matches .btn-primary on the web). */
+export const GRAD = ['#ff7a3d', '#ff6b5e'] as const;

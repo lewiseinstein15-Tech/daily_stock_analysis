@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useJexi, FeedItem } from '../../lib/store';
-import { C } from '../../lib/theme';
+import { C, F } from '../../lib/theme';
 import { clock } from '../../lib/format';
 import { Btn, Card, Orb, Pill, Row, Sub } from '../../components/ui';
 
@@ -79,10 +79,10 @@ export default function JexiFeed() {
 const s = StyleSheet.create({
   fill: { flex: 1, backgroundColor: C.bg },
   wrap: { paddingHorizontal: 20, paddingBottom: 24, gap: 12 },
-  title: { color: C.text, fontSize: 28, fontWeight: '900' },
+  title: { color: C.text, fontFamily: F.display, fontSize: 30, fontWeight: '600', letterSpacing: -0.5 },
   lead: { lineHeight: 19, marginTop: -6 },
   statusCard: { gap: 2 },
-  statusTitle: { color: C.text, fontSize: 16, fontWeight: '900' },
+  statusTitle: { color: C.text, fontSize: 16, fontWeight: '700', fontFamily: F.ui },
   msg: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', marginTop: 2 },
   bubble: {
     flex: 1,
@@ -95,6 +95,6 @@ const s = StyleSheet.create({
   },
   msgIcon: { fontSize: 14 },
   msgTime: { fontSize: 11 },
-  msgText: { color: C.text, fontSize: 14.5, lineHeight: 21, marginTop: 4 },
+  msgText: { color: C.text, fontSize: 14.5, lineHeight: 21, marginTop: 4, fontFamily: F.ui },
   end: { textAlign: 'center', color: C.faint, marginTop: 6 },
 });

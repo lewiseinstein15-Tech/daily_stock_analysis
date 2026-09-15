@@ -3,9 +3,9 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-nati
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useJexi, equityOf } from '../../lib/store';
-import { C } from '../../lib/theme';
+import { C, F } from '../../lib/theme';
 import { money, pct } from '../../lib/format';
-import { Card, LiveDot, Pill, Row, SectionTitle, Sub, Btn, Orb } from '../../components/ui';
+import { Card, LiveDot, LivePill, Pill, Row, SectionTitle, Sub, Btn, JexiMark, Wordmark, Avatar } from '../../components/ui';
 import { AreaChart } from '../../components/charts';
 
 function greeting() {
@@ -32,17 +32,31 @@ export default function Home() {
       contentContainerStyle={[s.wrap, { paddingTop: insets.top + 14, paddingBottom: 24 }]}
     >
       <Row style={s.top}>
-        <View style={s.topLeft}>
-          <Text style={s.greet}>{greeting()}{profile ? `, ${profile.name.split(' ')[0]}` : ''}</Text>
-          <Row style={{ gap: 6, marginTop: 3 }}>
-            <LiveDot tone={live ? C.green : C.amber} />
-            <Text style={[s.liveText, { color: live ? C.green : C.amber }]}>
-              {killed ? 'Stopped' : paused ? 'Paused — watching only' : 'Live — Jexi is working'}
-            </Text>
-          </Row>
-        </View>
-        <Orb size={38} />
+        <JexiMark size={34} />
+        <Wordmark />
+        <View style={{ flex: 1 }} />
+        <Avatar initial={(profile?.name || 'J')[0]} size={34} />
       </Row>
+
+      <View style={{ alignItems: 'center', marginTop: 2 }}>
+        <LivePill
+          dot={live ? C.green : C.amber}
+          color={live ? C.green : C.amber}
+          label={killed ? 'STOPPED · YOU ARE THE BOSS' : paused ? 'PAUSED · WATCHING ONLY' : 'LIVE PRICES · 10 MARKETS'}
+        />
+      </View>
+
+      <View style={{ alignItems: 'center', marginTop: 6 }}>
+        <Text style={s.greet}>
+          {greeting()}{profile ? `, ${profile.name.split(' ')[0]}` : ''}
+        </Text>
+        <Row style={{ gap: 6, marginTop: 4, alignItems: 'center' }}>
+          <LiveDot tone={live ? C.green : C.amber} />
+          <Text style={[s.liveText, { color: live ? C.green : C.amber }]}>
+            {killed ? 'Stopped' : paused ? 'Paused — watching only' : 'Live — Jexi is working'}
+          </Text>
+        </Row>
+      </View>
 
       <Card style={s.balanceCard}>
         <Sub>Total balance (cash + investments)</Sub>
@@ -126,21 +140,20 @@ export default function Home() {
 const s = StyleSheet.create({
   fill: { flex: 1, backgroundColor: C.bg },
   wrap: { paddingHorizontal: 20, gap: 14 },
-  top: { justifyContent: 'space-between' },
-  topLeft: {},
-  greet: { color: C.text, fontSize: 22, fontWeight: '900' },
-  liveText: { fontSize: 12.5, fontWeight: '700' },
-  balanceCard: { gap: 4 },
-  balance: { color: C.text, fontSize: 38, fontWeight: '900', marginTop: 2 },
+  top: { justifyContent: 'space-between', gap: 10 },
+  greet: { color: C.text, fontFamily: F.display, fontSize: 30, fontWeight: '600', letterSpacing: -0.5, textAlign: 'center' },
+  liveText: { fontSize: 12.5, fontWeight: '600', fontFamily: F.ui },
+  balanceCard: { gap: 4, alignItems: 'center' },
+  balance: { color: C.text, fontFamily: F.data, fontSize: 34, fontWeight: '700', marginTop: 2, letterSpacing: -0.5 },
   chartWrap: { marginTop: 12 },
   chartNote: { marginTop: 6, fontSize: 11.5 },
   link: { color: C.brand, fontWeight: '700' },
   pos: { paddingVertical: 14, marginTop: -6 },
   posLeft: { flex: 1 },
-  sym: { color: C.text, fontSize: 16, fontWeight: '800' },
+  sym: { color: C.text, fontSize: 16, fontWeight: '700', fontFamily: F.ui },
   posRight: { alignItems: 'flex-end' },
-  posValue: { color: C.text, fontSize: 15, fontWeight: '800' },
-  posPnl: { fontSize: 13, fontWeight: '700', marginTop: 2 },
+  posValue: { color: C.text, fontSize: 15, fontWeight: '700', fontFamily: F.data },
+  posPnl: { fontSize: 13, fontWeight: '600', marginTop: 2, fontFamily: F.data },
   actions: { flexDirection: 'row', gap: 10, marginTop: -6 },
   action: {
     flex: 1,
@@ -155,5 +168,5 @@ const s = StyleSheet.create({
   actionIcon: { fontSize: 20 },
   actionText: { color: C.text, fontSize: 12, fontWeight: '700' },
   aiNote: { marginBottom: 8 },
-  aiTitle: { color: C.text, fontSize: 14, fontWeight: '800' },
+  aiTitle: { color: C.text, fontSize: 14, fontWeight: '700', fontFamily: F.ui },
 });

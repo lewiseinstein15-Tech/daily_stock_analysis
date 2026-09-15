@@ -3,7 +3,7 @@ import { View, Text, TextInput, StyleSheet, ScrollView, Alert, Switch, Touchable
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useJexi } from '../../lib/store';
-import { C } from '../../lib/theme';
+import { C, F } from '../../lib/theme';
 import { Card, Pill, Row, SectionTitle, Sub, Btn, Orb } from '../../components/ui';
 
 function mask(k: string) {
@@ -145,7 +145,7 @@ export default function Settings() {
 
       <SectionTitle>About</SectionTitle>
       <Card style={{ gap: 6 }}>
-        <Sub>Jexi app · version 1.2.0 {liveMode ? '(live with your server)' : '(demo mode)'}</Sub>
+        <Sub>Jexi app · version 1.3.0 {liveMode ? '(live with your server)' : '(demo mode)'}</Sub>
         <Sub>{liveMode ? 'Live mode: your money numbers come from your server account.' : 'Demo money only until you connect your server in the card above.'}</Sub>
         <Sub>Nothing from this project is uploaded to GitHub.</Sub>
       </Card>
@@ -168,9 +168,9 @@ export default function Settings() {
 const s = StyleSheet.create({
   fill: { flex: 1, backgroundColor: C.bg },
   wrap: { paddingHorizontal: 20, paddingBottom: 24, gap: 14 },
-  title: { color: C.text, fontSize: 28, fontWeight: '900' },
+  title: { color: C.text, fontFamily: F.display, fontSize: 30, fontWeight: '600', letterSpacing: -0.5 },
   profile: { flexDirection: 'row', alignItems: 'center' },
-  profileName: { color: C.text, fontSize: 17, fontWeight: '900' },
+  profileName: { color: C.text, fontFamily: F.display, fontSize: 18, fontWeight: '600', letterSpacing: -0.2 },
   keyName: { color: C.text, fontSize: 15, fontWeight: '800' },
   keyNote: { color: C.faint, lineHeight: 18 },
   prefName: { color: C.text, fontSize: 15, fontWeight: '800' },

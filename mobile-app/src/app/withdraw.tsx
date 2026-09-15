@@ -3,7 +3,7 @@ import { View, Text, TextInput, StyleSheet, ScrollView, TouchableOpacity } from 
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useJexi, equityOf } from '../lib/store';
-import { C } from '../lib/theme';
+import { C, F } from '../lib/theme';
 import { money, ago } from '../lib/format';
 import { Btn, Card, Pill, Row, Sub } from '../components/ui';
 
@@ -160,9 +160,9 @@ const s = StyleSheet.create({
   stepsRow: { flexDirection: 'row', gap: 6 },
   stepDot: { flex: 1, height: 4, borderRadius: 2, backgroundColor: C.border },
   stepOn: { backgroundColor: C.brand },
-  title: { color: C.text, fontSize: 27, fontWeight: '900', marginTop: 4 },
+  title: { color: C.text, fontFamily: F.display, fontSize: 28, fontWeight: '600', letterSpacing: -0.4, marginTop: 4 },
   lead: { lineHeight: 20, marginTop: -4 },
-  avail: { color: C.text, fontSize: 30, fontWeight: '900' },
+  avail: { color: C.text, fontFamily: F.data, fontSize: 28, fontWeight: '700', letterSpacing: -0.5 },
   label: { color: C.sub, fontSize: 13, fontWeight: '700', marginTop: 4 },
   amountInput: {
     backgroundColor: C.card,
@@ -172,8 +172,9 @@ const s = StyleSheet.create({
     paddingHorizontal: 18,
     paddingVertical: 16,
     color: C.text,
-    fontSize: 26,
-    fontWeight: '900',
+    fontFamily: F.data,
+    fontSize: 24,
+    fontWeight: '700',
   },
   warn: { color: C.red, fontSize: 13, fontWeight: '700' },
   pct: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: C.border, backgroundColor: C.card },
@@ -182,9 +183,9 @@ const s = StyleSheet.create({
   methodOn: { borderColor: C.brand, backgroundColor: C.card2 },
   methodIcon: { fontSize: 26 },
   methodName: { color: C.text, fontSize: 15.5, fontWeight: '800' },
-  reviewVal: { color: C.text, fontWeight: '800', fontSize: 14, textAlign: 'right', flexShrink: 1 },
+  reviewVal: { color: C.text, fontWeight: '700', fontSize: 14, textAlign: 'right', flexShrink: 1, fontFamily: F.data },
   demo: { color: C.faint, textAlign: 'center', lineHeight: 18 },
   doneWrap: { alignItems: 'center', gap: 8, marginTop: 30 },
   doneIcon: { fontSize: 56 },
-  wAmount: { color: C.text, fontWeight: '900', fontSize: 16 },
+  wAmount: { color: C.text, fontWeight: '700', fontSize: 16, fontFamily: F.data },
 });
