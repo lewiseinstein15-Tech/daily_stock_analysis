@@ -38,7 +38,12 @@ export async function POST(req: Request) {
   return ok(
     {
       token,
-      user: { id: user.id, email: user.email, name: user.name, role: isAdmin ? "admin" : "user" },
+      user: {
+      id: user.id, email: user.email, name: user.name, role: isAdmin ? "admin" : "user",
+      terms_version: null,
+      terms_accepted_at: null,
+      terms_current: false,
+    },
       account,
     },
     201

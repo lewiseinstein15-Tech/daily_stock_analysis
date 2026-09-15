@@ -139,6 +139,15 @@ class AccountPlanner:
             plan.notes.append(
                 "Lately the best results came from: " + ", ".join(best[:3]) + ".")
 
+        # -- reflection lessons (v0.5, FinMem pattern) -------------------
+        if self.memory is not None:
+            try:
+                reflection = self.memory.reflect()
+                for lesson in reflection.get("lessons", [])[:3]:
+                    plan.notes.append(lesson)
+            except Exception as exc:  # reflection must never break the plan
+                logger.debug("reflection unavailable: %s", exc)
+
         # -- watch-outs from open positions ------------------------------------
         plan.watch_out = self._watch_outs()
 

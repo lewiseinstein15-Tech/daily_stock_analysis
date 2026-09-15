@@ -1,6 +1,7 @@
 import { verifyPassword, signToken } from "@/lib/crypto";
 import { getStore } from "@/lib/store";
 import { ok, bad, readJson } from "@/lib/api";
+import { termsCurrent } from "@/lib/terms";
 
 interface Body {
   email?: string;
@@ -32,7 +33,12 @@ export async function POST(req: Request) {
   const token = signToken({ uid: user.id, email: user.email });
   return ok({
     token,
-    user: { id: user.id, email: user.email, name: user.name, role: user.is_admin ? "admin" : "user" },
+    user: {
+      id: user.id, email: user.email, name: user.name, role: user.is_admin ? "admin" : "user",
+      terms_version: user.terms_version || null,
+      terms_accepted_at: user.terms_accepted_at || null,
+      terms_current: termsCurrent(user),
+    },
     account,
   });
 }

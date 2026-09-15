@@ -5,15 +5,17 @@ The Boss is the only agent in JEXI Market that can synthesise a
 :class:`Decision` from the specialist consensus.  Its responsibilities:
 
 1. Plan the run (build tasks for each symbol).
-2. Dispatch specialists in parallel where safe.
-3. Detect agreement / disagreement.
-4. Hand the consensus to Prof. Aldric for skeptical review.
-5. Synthesise a :class:`Decision` with structural confidence.
-6. Hand the decision to Vic for execution planning.
-7. Push the decision through the risk gate.
-8. (In paper mode) send to the Alpaca client.
-9. Push the report to ntfy.
-10. Record everything in performance memory.
+2. Run the skills pack (earnings, volatility, liquidity, gap, correlation).
+3. Dispatch specialists in parallel where safe.
+4. Detect agreement / disagreement.
+5. Hand the consensus to Prof. Aldric for skeptical review.
+6. Run the bull/bear debate (TradingAgents pattern) + LLM arbiter when
+   the user's AI key is configured.
+7. Synthesise a :class:`Decision` with structural confidence.
+8. Hand the decision to Vic for execution planning.
+9. Risk team review (aggressive/neutral/conservative + PM veto).
+10. Push the decision through the hard risk gate (still the only law).
+11. Record everything in performance memory and push the report.
 
 The Boss does NOT blindly accept one agent's opinion.  It compares
 evidence, weights agents by their historical accuracy (via the
@@ -37,6 +39,10 @@ from jexi_market.agents import (
     VicAgent,
     build_all_agents,
 )
+from jexi_market.agents.debate import DebateStage, debate_evidence
+from jexi_market.agents.llm_arbiter import LLMArbiter
+from jexi_market.agents.risk_team import RiskTeam
+from jexi_market.skills import SkillRegistry, build_default_skills
 from jexi_market.config import MarketConfig
 from jexi_market.contracts import (
     AgentKind,
@@ -71,6 +77,10 @@ class RunResult:
     decision: Optional[Decision] = None
     gate_approved: bool = False
     gate_violations: List[Dict[str, Any]] = field(default_factory=list)
+    debate: Optional[Dict[str, Any]] = None
+    arbiter: Optional[Dict[str, Any]] = None
+    risk_team: Optional[Dict[str, Any]] = None
+    skills: Optional[Dict[str, Any]] = None
     report_text: str = ""
     elapsed_seconds: float = 0.0
     error: Optional[str] = None
@@ -84,6 +94,10 @@ class RunResult:
             "decision": self.decision.to_dict() if self.decision else None,
             "gate_approved": self.gate_approved,
             "gate_violations": self.gate_violations,
+            "debate": self.debate,
+            "arbiter": self.arbiter,
+            "risk_team": self.risk_team,
+            "skills": self.skills,
             "elapsed_seconds": round(self.elapsed_seconds, 2),
             "error": self.error,
         }
@@ -129,6 +143,11 @@ class MarketBoss:
         self.aldric = ProfAldricAgent(config=self.config)
         self.vic = VicAgent(config=self.config)
         self.regime_classifier = RegimeClassifier()
+        # v0.5 agent stack: debate, risk team, LLM arbiter, skills
+        self.debate_stage = DebateStage()
+        self.risk_team = RiskTeam()
+        self.arbiter = LLMArbiter(config=self.config)
+        self.skills = SkillRegistry(build_default_skills())
         # Enrichment adapters (free fundamental + news + sector).
         # Lazy-imported so tests that don't need them stay fast.
         self.enable_enrichment = enable_enrichment
@@ -215,6 +234,25 @@ class MarketBoss:
                 except Exception as exc:
                     logger.debug("news enrichment failed for %s: %s", symbol, exc)
 
+                try:
+                    days = self.fundamental_adapter.get_earnings_days(symbol)
+                    if days is not None:
+                        research_cache[f"calendar:{symbol}"] = {
+                            "days_to_earnings": days,
+                            "source": "yfinance",
+                        }
+                except Exception as exc:
+                    logger.debug("earnings calendar failed for %s: %s", symbol, exc)
+
+            # Held symbols for the correlation guard (best effort).
+            held_symbols: List[str] = []
+            active_broker = self.broker
+            if active_broker is not None and getattr(active_broker, "configured", False):
+                try:
+                    held_symbols = [p.symbol for p in (active_broker.get_positions() or [])]
+                except Exception as exc:
+                    logger.debug("held symbols unavailable: %s", exc)
+
             ctx = AgentContext(
                 regime=regime_enum.value,
                 regime_score=regime_score,
@@ -222,7 +260,15 @@ class MarketBoss:
                 portfolio_drawdown=0.0,
                 risk_envelope=self.risk_gate.envelope,
                 research_cache=research_cache,
+                extras={"held_symbols": held_symbols},
             )
+
+            # 4.8 Skills pack — runs with the built context so the earnings
+            #    calendar, held symbols etc. are visible.  Outcomes flow into
+            #    ctx.extras, the decision's risk list and the size hint.
+            skills_report = self.skills.run_all(snapshot, factors, ctx)
+            result.skills = skills_report.to_dict()
+            ctx.extras["skills"] = skills_report
 
             # 5. Run every specialist agent (skip leadership agents —
             #    aldric/vic have review()/plan() interfaces, not analyze()).
@@ -258,6 +304,29 @@ class MarketBoss:
             # 6. Prof. Aldric reviews the consensus
             review = self.aldric.review(symbol, recommendations, regime_enum, factors)
 
+            # 6.5 Bull/bear debate (TradingAgents pattern, deterministic).
+            debate = self.debate_stage.run(
+                symbol=symbol,
+                recommendations=recommendations,
+                factors=factors,
+                research_cache=research_cache,
+                regime=regime_enum,
+            )
+            result.debate = debate.to_dict()
+
+            # 6.6 LLM arbiter — only when the user's AI key is configured.
+            #     Its influence is a confidence delta clamped to ±0.15.
+            arbiter_verdict = None
+            if LLMArbiter.enabled():
+                arbiter_verdict = self.arbiter.arbitrate(
+                    symbol=symbol,
+                    factors_summary=factors.to_dict(),
+                    recommendations=recommendations,
+                    debate=debate,
+                    proposed_direction=self._provisional_direction(recommendations),
+                )
+                result.arbiter = arbiter_verdict.to_dict()
+
             # 7. Synthesise decision
             decision = self._synthesize_decision(
                 symbol=symbol,
@@ -265,6 +334,9 @@ class MarketBoss:
                 review=review,
                 factors=factors,
                 regime=regime_enum,
+                debate=debate,
+                arbiter=arbiter_verdict,
+                skills_report=skills_report,
             )
             result.decision = decision
 
@@ -287,6 +359,21 @@ class MarketBoss:
             #    drawdown / sector checks inert in practice.
             sector = research_cache.get(f"sector:{symbol}") if isinstance(research_cache, dict) else None
             portfolio_state = self._build_portfolio_state(sector, symbol=symbol)
+
+            # 8.5 Risk team review (advisory: scales down or vetoes; the
+            #     hard gate below remains the only enforcing authority).
+            earnings_days = self._earnings_days(research_cache, symbol)
+            team_verdict = self.risk_team.review(
+                decision, portfolio_state, factors, self.risk_gate.envelope,
+                earnings_in_days=earnings_days,
+            )
+            result.risk_team = team_verdict.to_dict()
+            if decision.position_fraction > 0:
+                scaled = decision.position_fraction * team_verdict.position_scale
+                object.__setattr__(decision, "position_fraction", max(0.0, scaled))
+                if team_verdict.veto:
+                    logger.info("risk team vetoed %s — position fraction zeroed", symbol)
+
             gate_result = self.risk_gate.check(decision, portfolio_state, sector=sector)
             result.gate_approved = gate_result.approved
             result.gate_violations = [v.to_dict() for v in gate_result.violations]
@@ -340,6 +427,31 @@ class MarketBoss:
     # ------------------------------------------------------------------
     def run(self, symbols: List[str], *, days: int = 120) -> List[RunResult]:
         return [self.analyze_symbol(s, days=days) for s in symbols]
+
+    # ------------------------------------------------------------------
+    # v0.5 helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _provisional_direction(recommendations: List[Recommendation]) -> SignalDirection:
+        """Quick majority direction so the arbiter knows what to judge."""
+        longs = sum(1 for r in recommendations if r.direction == SignalDirection.LONG)
+        shorts = sum(1 for r in recommendations if r.direction == SignalDirection.SHORT)
+        if longs > shorts:
+            return SignalDirection.LONG
+        if shorts > longs:
+            return SignalDirection.SHORT
+        return SignalDirection.FLAT
+
+    @staticmethod
+    def _earnings_days(research_cache: Dict[str, Any], symbol: str) -> Optional[int]:
+        entry = research_cache.get(f"calendar:{symbol}") if isinstance(research_cache, dict) else None
+        if isinstance(entry, dict):
+            try:
+                return int(entry.get("days_to_earnings"))
+            except (TypeError, ValueError):
+                return None
+        # Fall back to the skills report note emitted by the calendar skill
+        return None
 
     # ------------------------------------------------------------------
     # Real portfolio state (v0.3)
@@ -432,8 +544,12 @@ class MarketBoss:
         review: Any,
         factors: FactorSnapshot,
         regime: MarketRegime,
+        debate: Any = None,
+        arbiter: Any = None,
+        skills_report: Any = None,
     ) -> Decision:
-        """Build a Decision from the specialist consensus + Aldric review."""
+        """Build a Decision from the specialist consensus + Aldric review
+        + debate verdict + (optional) arbiter judgment."""
         if not recommendations:
             return Decision(
                 symbol=symbol,
@@ -487,12 +603,24 @@ class MarketBoss:
         supporting = tuple(r.agent_id for r in directional if r.direction == direction)
         opposing = tuple(r.agent_id for r in directional if r.direction != direction and r.direction != SignalDirection.FLAT)
 
-        # Confidence = structural
+        # Confidence = structural (+ bounded debate/arbiter adjustments)
+        debate_adj = 0.0
+        arbiter_delta = 0.0
+        extra_penalty = 0.0
+        arbiter_reason = ""
+        if debate is not None:
+            debate_adj = float(getattr(debate, "confidence_adjustment", 0.0) or 0.0)
+        if arbiter is not None and getattr(arbiter, "ok", False) and getattr(arbiter, "verdict", "") != "no_opinion":
+            arbiter_delta = float(getattr(arbiter, "confidence_delta", 0.0) or 0.0)
+            arbiter_reason = str(getattr(arbiter, "reason", "") or "")
+            if getattr(arbiter, "verdict", "") == "disagree":
+                extra_penalty = 0.1
+        adjusted_agreement = max(0.0, min(1.0, agreement + debate_adj + arbiter_delta))
         confidence = Confidence(
-            agreement=agreement,
+            agreement=adjusted_agreement,
             data_freshness=min(1.0, factors.rows / 120.0),
             evidence_count=len(unique_evidence),
-            disagreement_penalty=review.disagreement_penalty,
+            disagreement_penalty=min(1.0, review.disagreement_penalty + extra_penalty),
         )
 
         # Entry / stop / target from factors
@@ -508,20 +636,31 @@ class MarketBoss:
                 stop_loss = entry * (1.0 + 1.5 * atr_pct)
                 take_profit = entry * (1.0 - 3.0 * atr_pct)
 
-        # Risks: gather from review contradictions + risk agent
+        # Risks: review contradictions + risk agent + skills flags + bear case
         risks = list(review.contradiction_points) if hasattr(review, "contradiction_points") else []
         risk_recs = [r for r in recommendations if r.agent_kind == AgentKind.RISK]
         for r in risk_recs:
             for ev in r.evidence:
                 risks.append(ev.claim)
+        if skills_report is not None:
+            risks.extend(getattr(skills_report, "risk_flags", []) or [])
+        if debate is not None:
+            for p in getattr(debate, "bear_points", [])[:2]:
+                risks.append(p.claim)
+        if arbiter_reason and getattr(arbiter, "verdict", "") == "disagree":
+            risks.append(f"AI arbiter: {arbiter_reason}")
         # Dedupe
-        risks = list(dict.fromkeys(risks))[:5]
+        risks = list(dict.fromkeys(risks))[:6]
 
-        # Thesis
+        # Thesis (agent consensus + debate outcome + arbiter note)
         thesis_parts = []
         for rec in directional[:3]:
             thesis_parts.append(f"{rec.agent_id}: {rec.thesis}")
         thesis = "; ".join(thesis_parts) if thesis_parts else "neutral consensus"
+        if debate is not None and getattr(debate, "summary", ""):
+            thesis += f" | {debate.summary}"
+        if arbiter is not None and getattr(arbiter, "ok", False) and arbiter_reason and getattr(arbiter, "verdict", "") == "agree":
+            thesis += f" | AI arbiter agrees: {arbiter_reason}"
 
         # Invalidation
         invalidation = "; ".join(review.invalidation_conditions[:2]) if hasattr(review, "invalidation_conditions") else "regime change"
@@ -537,7 +676,7 @@ class MarketBoss:
             risk_per_trade=self.risk_gate.envelope.max_risk_per_trade,
             thesis=thesis,
             invalidation=invalidation,
-            evidence=tuple(unique_evidence),
+            evidence=tuple(list(unique_evidence) + (list(debate_evidence(debate)) if debate is not None else [])),
             supporting_agents=supporting,
             opposing_agents=opposing,
             risks=tuple(risks),

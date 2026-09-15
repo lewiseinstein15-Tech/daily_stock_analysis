@@ -1,5 +1,6 @@
 import { verifyToken } from "@/lib/crypto";
 import { getStore } from "@/lib/store";
+import { termsCurrent } from "@/lib/terms";
 
 // GET /api/auth/me — Bearer-token profile lookup.
 // Used by the Android app shell (and any non-browser client) to turn a signed
@@ -22,6 +23,14 @@ export async function GET(req: Request) {
   }
   return Response.json({
     ok: true,
-    user: { id: user.id, email: user.email, name: user.name, role: user.is_admin ? "admin" : "user" },
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.is_admin ? "admin" : "user",
+      terms_version: user.terms_version || null,
+      terms_accepted_at: user.terms_accepted_at || null,
+      terms_current: termsCurrent(user),
+    },
   });
 }

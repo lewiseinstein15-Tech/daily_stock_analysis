@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,43 @@ class FundamentalAdapter:
         except Exception as exc:
             logger.warning("fundamental fetch failed for %s: %s", symbol, exc)
             return Fundamentals(symbol=symbol, ok=False, error=str(exc), source=self.source)
+
+    def get_earnings_days(self, symbol: str) -> Optional[int]:
+        """Days until the next confirmed earnings date (None = unknown).
+
+        Reads the real yfinance calendar / info timestamp — we never guess
+        a date.  Returns None on any gap so the skills layer treats the
+        event as "unknown" rather than fabricating one.
+        """
+        try:
+            import yfinance as yf  # type: ignore
+        except ImportError:
+            return None
+        try:
+            tkr = yf.Ticker(symbol)
+            next_dt = None
+            try:
+                cal = tkr.calendar
+                if isinstance(cal, dict):
+                    cand = cal.get("Earnings Date") or []
+                    if isinstance(cand, (list, tuple)) and cand:
+                        first = cand[0]
+                        next_dt = first if hasattr(first, "date") else None
+                    elif hasattr(cand, "date"):
+                        next_dt = cand
+            except Exception:
+                pass
+            if next_dt is None:
+                ts = _safe_float((tkr.info or {}).get("earningsTimestamp"))
+                if ts:
+                    next_dt = datetime.utcfromtimestamp(ts)
+            if next_dt is None:
+                return None
+            delta = next_dt.date() - datetime.utcnow().date()
+            return int(delta.days)
+        except Exception as exc:
+            logger.debug("earnings calendar unavailable for %s: %s", symbol, exc)
+            return None
 
 
 # ---------------------------------------------------------------------------

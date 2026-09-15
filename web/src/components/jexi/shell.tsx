@@ -9,7 +9,8 @@ import { AuthView, Landing } from "@/components/jexi/views-public";
 import { AssetView, CommandView, MarketsView } from "@/components/jexi/views-app";
 import { AlertsView, IntelligenceView, PortfolioView, SettingsView } from "@/components/jexi/views-app2";
 import { PrivacyView, TermsView } from "@/components/jexi/views-legal";
-import { UNIVERSE, useAccount, useAuth, useFeed, useNotifications, useProfits } from "@/lib/jexi/data";
+import { UNIVERSE, useAccount, useAuth, useFeed, useNotifications, useProfits, acceptTerms, api } from "@/lib/jexi/data";
+import type { JexiUser } from "@/lib/jexi/data";
 import { NotificationsView } from "@/components/jexi/views-app2";
 
 type View = "landing" | "auth" | "command" | "markets" | "asset" | "portfolio" | "intelligence" | "alerts" | "notifications" | "settings" | "legal";
@@ -93,6 +94,29 @@ export function JexiApp() {
   const connected = Boolean(token);
   const feed = liveFeed;
 
+  // Terms & Policies check — one server look-up per session. The gate only
+  // shows when the server CONFIRMED the user has not accepted the current
+  // version (a network failure never locks anyone out).
+  const [terms, setTerms] = useState<{ checked: boolean; current: boolean }>({ checked: false, current: true });
+  useEffect(() => {
+    if (!token) {
+      setTerms({ checked: false, current: true });
+      return;
+    }
+    let alive = true;
+    api<{ ok: true; user: JexiUser }>("/api/auth/me", { token })
+      .then((r) => {
+        if (alive) setTerms({ checked: true, current: r.user.terms_current === true });
+      })
+      .catch(() => {
+        if (alive) setTerms({ checked: false, current: true });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [token, user?.terms_accepted_at]);
+  const needsTerms = connected && terms.checked && !terms.current;
+
   const nav = (v: string, s?: string) => go(v, s);
 
   const content = useMemo(() => {
@@ -100,6 +124,8 @@ export function JexiApp() {
     if (view === "landing") return <Landing go={nav} />;
     if (view === "auth") return user ? <CommandView go={nav} token={token} account={account} feed={feed} isDemo={!connected} /> : <AuthView go={nav} />;
     if (view === "legal") return doc === "privacy" ? <PrivacyView go={nav} /> : <TermsView go={nav} />;
+    // Everyone signs in: members-only views bounce to the sign-in page.
+    if (!connected) return <AuthView go={nav} />;
 
     const shared = { go: nav, token, account, feed, isDemo: !connected };
     switch (view) {
@@ -225,6 +251,145 @@ export function JexiApp() {
       )}
 
       {paletteOpen && <Palette onClose={() => setPaletteOpen(false)} go={go} />}
+
+      {needsTerms && (
+        <TermsGate
+          token={token}
+          onAccepted={() => setTerms({ checked: true, current: true })}
+          onDecline={() => {
+            signOut();
+            go("landing");
+          }}
+          go={go}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Terms & Policies acceptance gate — every account must accept the current
+// version before using the app. Decline = sign out.
+// ---------------------------------------------------------------------------
+function TermsGate({
+  token,
+  onAccepted,
+  onDecline,
+  go,
+}: {
+  token: string | null;
+  onAccepted: () => void;
+  onDecline: () => void;
+  go: (v: string, s?: string) => void;
+}) {
+  const [agreed, setAgreed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const accept = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await acceptTerms(token);
+      onAccepted();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Could not record acceptance — try again.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center px-4"
+      style={{ background: "rgba(8,7,5,.78)", backdropFilter: "blur(6px)" }}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Accept the Terms & Policies"
+    >
+      <div
+        className="panel w-full max-w-lg"
+        style={{ animation: "jexi-rise 180ms var(--ease) both" }}
+      >
+        <div className="flex items-center gap-3 border-b px-5 py-4" style={{ borderColor: "var(--line-soft)" }}>
+          <span
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-[15px] font-bold"
+            style={{ background: "linear-gradient(135deg, var(--ember), var(--coral))", color: "#180f08" }}
+          >
+            J
+          </span>
+          <div>
+            <div className="text-[15.5px] font-semibold">Before you continue</div>
+            <div className="text-[12px]" style={{ color: "var(--ink-3)" }}>
+              Jexi Terms &amp; Policies — updated 16 Sep 2026
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-2.5 px-5 py-4 text-[13.5px] leading-relaxed" style={{ color: "var(--ink-2)" }}>
+          <p>To keep Jexi safe for everyone, please accept the house rules:</p>
+          <ul className="ml-4 list-disc space-y-1.5">
+            <li>
+              <b style={{ color: "var(--ink)" }}>Real money, real risk.</b> Jexi can trade a live brokerage
+              account with real funds. Prices move fast and losses are real — never deposit money you
+              cannot afford to lose.
+            </li>
+            <li>
+              <b style={{ color: "var(--ink)" }}>No advice, no promises.</b> Jexi is software that follows
+              your rules. Nothing it says is investment advice, and past results never guarantee future ones.
+            </li>
+            <li>
+              <b style={{ color: "var(--ink)" }}>You stay in charge.</b> Keys you save are yours, encrypted;
+              live mode is capped and can be paused or halted from the app at any time.
+            </li>
+            <li>
+              <b style={{ color: "var(--ink)" }}>Fair use &amp; privacy.</b> One account per person, no abuse
+              of the service, and your data is handled per the Privacy Policy.
+            </li>
+          </ul>
+          <p className="text-[12.5px]" style={{ color: "var(--ink-3)" }}>
+            Read the full documents:{" "}
+            <button className="underline" style={{ color: "var(--ember)" }} onClick={() => go("legal", "terms")}>
+              Terms of Service
+            </button>{" "}
+            ·{" "}
+            <button className="underline" style={{ color: "var(--ember)" }} onClick={() => go("legal", "privacy")}>
+              Privacy Policy
+            </button>
+          </p>
+        </div>
+
+        <div className="space-y-3 border-t px-5 py-4" style={{ borderColor: "var(--line-soft)" }}>
+          <label className="flex cursor-pointer items-start gap-2.5 text-[13.5px]" style={{ color: "var(--ink)" }}>
+            <input
+              type="checkbox"
+              checked={agreed}
+              onChange={(e) => setAgreed(e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-[var(--ember)]"
+            />
+            <span>
+              I have read and accept the Jexi Terms of Service and Privacy Policy, and I understand that
+              live trading involves real financial risk.
+            </span>
+          </label>
+          {error && (
+            <div className="text-[12.5px]" style={{ color: "var(--coral, #ff6b6b)" }}>
+              {error}
+            </div>
+          )}
+          <div className="flex items-center gap-2.5">
+            <button className="btn btn-primary flex-1" disabled={!agreed || busy} style={{ opacity: !agreed || busy ? 0.5 : 1 }} onClick={accept}>
+              {busy ? "Saving…" : "Accept and continue"}
+            </button>
+            <button className="btn" onClick={onDecline} style={{ color: "var(--ink-3)" }}>
+              Decline
+            </button>
+          </div>
+          <div className="text-[11.5px]" style={{ color: "var(--ink-3)" }}>
+            Declining signs you out. You can come back any time.
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

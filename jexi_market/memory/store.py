@@ -320,6 +320,93 @@ class PerformanceMemory:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def reflect(self) -> Dict[str, Any]:
+        """FinMem-style reflection over closed trades — deterministic lessons.
+
+        Produces plain-English lessons the planner/reporter can push to the
+        user's feed: best/worst agents (with enough data), regime bias,
+        streaks, and stop/target behaviour.  Read-only; it never mutates
+        weights directly (weights flow through agent_weight's clamp).
+        """
+        with self._conn() as conn:
+            closed = conn.execute(
+                "SELECT * FROM trades WHERE outcome IN ('win','loss','breakeven') "
+                "ORDER BY closed_at DESC LIMIT 60"
+            ).fetchall()
+        if not closed:
+            return {"lessons": [], "n_trades": 0}
+
+        lessons: List[str] = []
+        n = len(closed)
+        wins = [t for t in closed if t["outcome"] == "win"]
+        losses = [t for t in closed if t["outcome"] == "loss"]
+        win_rate = len(wins) / n
+
+        # Agent accuracy lessons (need >= 3 attributed calls)
+        stats = self.agent_stats()
+        ranked = sorted(
+            ((a, s) for a, s in stats.items() if s["n_calls"] >= 3),
+            key=lambda kv: kv[1]["accuracy"],
+        )
+        if ranked:
+            worst_a, worst_s = ranked[0]
+            best_a, best_s = ranked[-1]
+            if worst_s["accuracy"] < 0.4:
+                lessons.append(
+                    f"{worst_a} is drifting: {worst_s['accuracy']:.0%} accurate over "
+                    f"{worst_s['n_calls']} calls — its votes now carry less weight."
+                )
+            if best_s["accuracy"] >= 0.6 and best_a != worst_a:
+                lessons.append(
+                    f"{best_a} leads the desk: {best_s['accuracy']:.0%} accurate over "
+                    f"{best_s['n_calls']} calls."
+                )
+
+        # Regime bias
+        by_regime: Dict[str, List[str]] = {}
+        for t in closed:
+            by_regime.setdefault(t["regime"] or "unknown", []).append(t["outcome"])
+        for regime, outs in by_regime.items():
+            if len(outs) >= 4:
+                r_wins = outs.count("win")
+                if r_wins / len(outs) <= 0.25:
+                    lessons.append(
+                        f"{regime} regime is hurting you: {r_wins}/{len(outs)} trades won there."
+                    )
+
+        # Streaks
+        recent = [t["outcome"] for t in closed[:5]]
+        if recent.count("loss") >= 4:
+            lessons.append("Four of the last five trades lost — the conservative reviewer will tighten sizing automatically.")
+        elif recent.count("win") >= 4:
+            lessons.append("Four of the last five trades won — but sizing discipline stays the same.")
+
+        # Loss shape: are losses breaching the planned stop?
+        stop_breach = 0
+        for t in losses:
+            try:
+                if t["exit_price"] is not None and t["stop_loss"] is not None and t["direction"] == "long":
+                    if float(t["exit_price"]) < float(t["stop_loss"]) * 0.98:
+                        stop_breach += 1
+                elif t["exit_price"] is not None and t["stop_loss"] is not None and t["direction"] == "short":
+                    if float(t["exit_price"]) > float(t["stop_loss"]) * 1.02:
+                        stop_breach += 1
+            except (TypeError, ValueError):
+                continue
+        if stop_breach >= 2:
+            lessons.append(
+                f"{stop_breach} losses exited beyond their stop — slippage or gaps; "
+                "gap-prone names get trimmed by the skills layer."
+            )
+
+        return {
+            "lessons": lessons,
+            "n_trades": n,
+            "win_rate": round(win_rate, 4),
+            "n_wins": len(wins),
+            "n_losses": len(losses),
+        }
+
     def paper_trading_days(self) -> int:
         """Distinct trading days with *real* trades — for the 30-day gate.
 

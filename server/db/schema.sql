@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   name TEXT DEFAULT '',
   is_admin INTEGER DEFAULT 0,
+  terms_version TEXT,
+  terms_accepted_at TEXT,
   created_at TEXT DEFAULT (datetime('now'))
 );
 

@@ -139,6 +139,9 @@ WEB_SETTINGS_HIDDEN_FROM_UI = {
     "JEXI_PLAIN_ENGLISH",
     "JEXI_MCP_ENABLED",
     "JEXI_MCP_SERVERS",
+    # v0.5 - LLM arbiter (env-only; output clamped in code)
+    "JEXI_LLM_ARBITER",
+    "JEXI_LLM_MODEL",
 }
 
 _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {

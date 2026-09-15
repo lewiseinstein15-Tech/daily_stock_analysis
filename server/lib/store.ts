@@ -7,6 +7,8 @@ export interface User {
   name: string;
   password_hash: string;
   is_admin?: number;
+  terms_version?: string | null;
+  terms_accepted_at?: string | null;
 }
 export interface KeysRow {
   ai_provider: string;
@@ -137,6 +139,13 @@ class MemoryStore {
   }
   async getUserById(id: number) {
     return this.users.find((u) => u.id === id) || null;
+  }
+  async acceptTerms(id: number, version: string, acceptedAt: string) {
+    const u = this.users.find((x) => x.id === id);
+    if (u) {
+      u.terms_version = version;
+      u.terms_accepted_at = acceptedAt;
+    }
   }
   async createUser(email: string, passwordHash: string, name: string, isAdmin = 0): Promise<User> {
     const user: User & { created_at: string } = {
@@ -408,6 +417,12 @@ class D1Store {
   async getUserById(id: number) {
     const r = await d1Query<User>("SELECT * FROM users WHERE id = ? LIMIT 1", [id]);
     return r.rows[0] || null;
+  }
+  async acceptTerms(id: number, version: string, acceptedAt: string) {
+    await d1Query(
+      "UPDATE users SET terms_version = ?, terms_accepted_at = ? WHERE id = ?",
+      [version, acceptedAt, id]
+    );
   }
   async createUser(email: string, passwordHash: string, name: string, isAdmin = 0): Promise<User> {
     const ins = await d1Query(

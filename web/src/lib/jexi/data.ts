@@ -23,6 +23,9 @@ export interface JexiUser {
   email: string;
   name: string;
   role?: string;
+  terms_version?: string | null;
+  terms_accepted_at?: string | null;
+  terms_current?: boolean;
 }
 
 function getToken(): string | null {
@@ -420,6 +423,19 @@ export function useAuth() {
       setReady(true);
     };
     hydrate();
+    // Quiet session refresh: validates the stored token against the server
+    // and pulls fresh fields (Terms acceptance status, role, name). On 401
+    // the existing jexi.unauthorized handler wipes the session.
+    const t0 = getToken();
+    if (t0) {
+      api<{ ok: true; user: JexiUser }>("/api/auth/me", { token: t0 })
+        .then((r) => {
+          userRef.current = r.user;
+          localStorage.setItem("jexi.user", JSON.stringify(r.user));
+          setUser(r.user);
+        })
+        .catch(() => {});
+    }
     // Full-page Google sign-in (the Android app shell runs OAuth in the same
     // window, so no popup/opener exists): the server bounces back here with
     // #gt=<token>. Turn it into a normal session, then clean the address bar.
@@ -446,11 +462,25 @@ export function useAuth() {
       setTok(null);
       setUser(null);
     };
+    // Terms accepted in the gate → refresh the user copy server-side.
+    const onTermsAccepted = () => {
+      const t = getToken();
+      if (!t) return;
+      api<{ ok: true; user: JexiUser }>("/api/auth/me", { token: t })
+        .then((r) => {
+          userRef.current = r.user;
+          localStorage.setItem("jexi.user", JSON.stringify(r.user));
+          setUser(r.user);
+        })
+        .catch(() => {});
+    };
     window.addEventListener("message", onMsg);
     window.addEventListener("jexi.unauthorized", onUnauthorized);
+    window.addEventListener("jexi.terms-accepted", onTermsAccepted);
     return () => {
       window.removeEventListener("message", onMsg);
       window.removeEventListener("jexi.unauthorized", onUnauthorized);
+      window.removeEventListener("jexi.terms-accepted", onTermsAccepted);
     };
   }, [applySession]);
 
@@ -490,6 +520,19 @@ export function useAuth() {
   }, []);
 
   return { user, token, ready, signIn, signUp, signOut, startGoogle, googleEnabled: google, isAdmin: user?.role === "admin" };
+}
+
+// Record acceptance of the Terms & Policies for the signed-in user.
+// The server pins the version; on success the app-wide user copy refreshes
+// via the jexi.terms-accepted event handled inside useAuth.
+export async function acceptTerms(token: string | null): Promise<{ terms_version: string; terms_accepted_at: string }> {
+  const r = await api<{ ok: true; terms_version: string; terms_accepted_at: string }>("/api/account/terms", {
+    method: "POST",
+    body: { accepted: true },
+    token,
+  });
+  window.dispatchEvent(new Event("jexi.terms-accepted"));
+  return { terms_version: r.terms_version, terms_accepted_at: r.terms_accepted_at };
 }
 
 // ---------------- market data hook ----------------
@@ -749,7 +792,7 @@ export function useLocalList<T>(storageKey: string, initial: T[]) {
 
 // ---------------- legal content ----------------
 
-export const LEGAL_UPDATED = "September 15, 2026";
+export const LEGAL_UPDATED = "September 16, 2026";
 
 export function briefingFromQuotes(quotes: Quotes): {
   regime: string;
