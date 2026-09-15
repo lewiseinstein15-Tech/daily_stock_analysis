@@ -331,7 +331,41 @@ class OpportunityRunner:
                     "confidence": round(conf, 4)}
 
         # --- execute ------------------------------------------------------
-        acct = self.broker.get_account()
+        try:
+            acct = self.broker.get_account()
+        except Exception as exc:
+            # A dead broker session must never crash the whole cycle or
+            # look like a watchdog failure.  Say plainly what happened
+            # and what to do — especially for Pocket Broker, whose SSID
+            # sessions expire by design (no API keys exist there).
+            self.audit.event("broker_unreachable", symbol=ev.symbol, error=str(exc))
+            broker_name = str(getattr(self.broker, "name", "") or "")
+            if broker_name == "pocketoption" and "connect" in str(exc).lower():
+                self.notify(
+                    "Pocket Broker session expired",
+                    (
+                        "I found a good moment on "
+                        f"{ev.symbol} but could not reach Pocket Broker — the "
+                        "session string expires every so often. Paste a fresh "
+                        "SSID in Jexi Settings -> Keys (2 minutes) and I am "
+                        "back in business. Nothing was traded and your money "
+                        "is safe."
+                    ),
+                    priority="high",
+                    tags=["warning"],
+                )
+            else:
+                self.notify(
+                    "Could not reach your broker",
+                    (
+                        f"I found a good moment on {ev.symbol} but the broker "
+                        f"did not respond ({exc}). Nothing was traded — I will "
+                        "try again on the next good moment."
+                    ),
+                    priority="high",
+                    tags=["warning"],
+                )
+            return {"symbol": ev.symbol, "outcome": "broker_unreachable"}
         equity = acct.equity if acct.equity > 0 else 100_000.0
         price = decision.entry or ev.price or 0.0
         if price <= 0:

@@ -170,7 +170,18 @@ class AccountPlanner:
             equity = float(acct.equity or 0.0)
             cash = float(acct.cash or 0.0)
         except Exception as exc:
-            plan.notes.append(f"Could not read the account ({exc}).")
+            # Pocket Broker sessions are short-lived by design (Pocket
+            # Option has no API keys — the SSID is the only credential).
+            # When it dies, tell the user exactly what to do instead of
+            # a cryptic connect error.
+            broker_name = str(getattr(self.broker, "name", "") or "")
+            if broker_name == "pocketoption" and "connect" in str(exc).lower():
+                plan.notes.append(
+                    "Pocket Broker session expired — paste a fresh SSID in "
+                    "Jexi Settings -> Keys (takes about 2 minutes)."
+                )
+            else:
+                plan.notes.append(f"Could not read the account ({exc}).")
             return equity, cash, n_pos, open_profit
         try:
             positions = self.broker.get_positions()

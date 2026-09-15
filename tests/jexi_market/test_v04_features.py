@@ -358,6 +358,43 @@ def test_planner_watch_outs_from_open_trades(tmp_path):
     assert any("AAPL" in w and "$95.00" in w for w in plan.watch_out)
 
 
+def test_planner_dead_pocket_session_gets_actionable_note(tmp_path):
+    """Pocket Option has no API keys — when the SSID dies the plan must say
+    exactly what to do, in plain English."""
+    from jexi_market.planner import AccountPlanner
+    from jexi_market.risk.state import RiskStateStore
+
+    class _DeadPocket(_StubBroker):
+        name = "pocketoption"
+
+        def get_account(self):
+            raise RuntimeError(
+                "pocket option connect failed: Connection to remote host was lost."
+            )
+
+    plan = AccountPlanner(MarketConfig(), broker=_DeadPocket(), memory=None,
+                          state_store=RiskStateStore(str(tmp_path / "s.sqlite"))).build()
+    joined = " | ".join(plan.notes)
+    assert "session expired" in joined.lower()
+    assert "Settings -> Keys" in joined
+    assert "Could not read the account" not in joined
+
+
+def test_planner_generic_broker_failure_keeps_plain_note(tmp_path):
+    from jexi_market.planner import AccountPlanner
+    from jexi_market.risk.state import RiskStateStore
+
+    class _DeadBroker(_StubBroker):
+        name = "alpaca"
+
+        def get_account(self):
+            raise RuntimeError("connection refused")
+
+    plan = AccountPlanner(MarketConfig(), broker=_DeadBroker(), memory=None,
+                          state_store=RiskStateStore(str(tmp_path / "s.sqlite"))).build()
+    assert any("Could not read the account" in n for n in plan.notes)
+
+
 # ---------------------------------------------------------------------------
 # Broker auto-detection (any market via env / git secrets)
 # ---------------------------------------------------------------------------
@@ -724,6 +761,53 @@ def test_watch_stats_accumulate():
     assert runner.stats.triggers_fired >= 1
     assert runner.stats.pipeline_runs == 1
     assert runner.stats.orders_placed == 1
+
+
+def test_watch_once_dead_pocket_session_notifies_clearly():
+    """An expired Pocket SSID must become ONE plain-English notice — never
+    a crash, never a watchdog halt, never a silent no-trade."""
+    hot = _frame([100 + i * 0.5 for i in range(40)])
+
+    class _DeadPocket(_StubBroker):
+        name = "pocketoption"
+
+        def get_account(self):
+            raise RuntimeError(
+                "pocket option connect failed: Connection to remote host was lost."
+            )
+
+    runner, lifecycle = _make_runner(
+        {"AAPL": hot}, {"AAPL": _decision(entry=hot["close"].iloc[-1])},
+        broker=_DeadPocket(),
+    )
+    result = runner.watch_once()
+    assert result["deep_dives"][0]["outcome"] == "broker_unreachable"
+    assert lifecycle.opened == [], "no order may be attempted on a dead session"
+    assert not runner.state.halted, "a dead session is not a watchdog failure"
+    titles = [c["title"] for c in runner.reporter.calls]
+    bodies = [c["message"] for c in runner.reporter.calls]
+    assert any("Pocket Broker session expired" in t for t in titles)
+    assert any("Settings -> Keys" in b for b in bodies)
+
+
+def test_watch_once_dead_generic_broker_notifies_without_pocket_text():
+    hot = _frame([100 + i * 0.5 for i in range(40)])
+
+    class _DeadBroker(_StubBroker):
+        name = "alpaca"
+
+        def get_account(self):
+            raise RuntimeError("connection refused")
+
+    runner, lifecycle = _make_runner(
+        {"AAPL": hot}, {"AAPL": _decision(entry=hot["close"].iloc[-1])},
+        broker=_DeadBroker(),
+    )
+    result = runner.watch_once()
+    assert result["deep_dives"][0]["outcome"] == "broker_unreachable"
+    assert lifecycle.opened == []
+    titles = [c["title"] for c in runner.reporter.calls]
+    assert any("Could not reach your broker" in t for t in titles)
 
 
 # ---------------------------------------------------------------------------

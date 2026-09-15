@@ -1122,13 +1122,15 @@ export function SettingsView({ go, token, user, isAdmin, signOut }: {
                     ))}
                   </select>
                   <div className="grid gap-2">
-                    <input className="input" type="password" placeholder={brokerName.startsWith("pocketoption") ? "Pocket Option SSID session string" : "Broker API key"} value={brokerKey} onChange={(e) => setBrokerKey(e.target.value)} />
+                    <input className="input" type="password" placeholder={brokerName.startsWith("pocketoption") ? "Pocket Option SSID session string (or full 42[...auth...] line)" : "Broker API key"} value={brokerKey} onChange={(e) => setBrokerKey(e.target.value)} />
                     <input className="input" type="password" placeholder="Broker secret (optional)" value={brokerSecret} onChange={(e) => setBrokerSecret(e.target.value)} />
                   </div>
-                  <p className="mt-2 text-[11px] leading-relaxed" style={{ color: "var(--ink-3)" }}>
+                  <p className="mt-2 text-[11px] leading-relaxed" style={{ color: "var(--ink-3)", marginTop: 8, marginBottom: 0 }}>
                     alpaca-paper = practice broker · alpaca-live = real money · pocketoption = Pocket Option (Pocket Broker) demo
-                    · pocketoption-live = Pocket Option real money — paste the SSID session string as the key. Jexi pulls these keys itself when it
-                    trades for you — they never sit on GitHub or any outside service.
+                    · pocketoption-live = Pocket Option real money — paste the SSID session string as the key. Pocket Option has no API
+                    keys: the SSID is the only key it gives, and it expires every so often. When Jexi says "session expired", just
+                    paste a fresh one here (2 minutes). Jexi pulls these keys itself when it trades for you — they never sit on
+                    GitHub or any outside service.
                   </p>
                 </div>
               </div>
