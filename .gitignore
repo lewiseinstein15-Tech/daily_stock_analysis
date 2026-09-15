@@ -107,3 +107,6 @@ docs/specs/
 /mobile-app/webexport/
 /mobile-app/preview/
 server/tsconfig.tsbuildinfo
+
+.vercel/
+.env*.local
