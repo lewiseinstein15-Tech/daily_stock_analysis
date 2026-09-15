@@ -76,11 +76,23 @@ jobs:
 
           lines = [
               "Overnight research done — no trades placed.",
-              f"Account: {plan.get('broker_name') or 'broker'} · equity {money(plan.get('equity'))} · "
-              f"cash {money(plan.get('cash'))} · {plan.get('n_positions', 0)} open positions.",
-              f"Room for new positions: {plan.get('max_new_positions', 'n/a')} · "
-              f"risk per trade: {money(plan.get('risk_per_trade_amount'))}.",
           ]
+          if plan.get("equity"):
+              lines.append(
+                  f"Account: {plan.get('broker_name') or 'broker'} · equity {money(plan.get('equity'))} · "
+                  f"cash {money(plan.get('cash'))} · {plan.get('n_positions', 0)} open positions."
+              )
+              lines.append(
+                  f"Room for new positions: {plan.get('max_new_positions', 'n/a')} · "
+                  f"risk per trade: {money(plan.get('risk_per_trade_amount'))}."
+              )
+          else:
+              # Broker unreachable (e.g. an expired Pocket Option SSID):
+              # never show "$0.00" — that would look like money vanished.
+              lines.append(
+                  f"Account: could not reach {plan.get('broker_name') or 'your broker'} right now — "
+                  "your money and positions are safe. See the note below."
+              )
           watch_out = plan.get("watch_out") or []
           if isinstance(watch_out, list) and watch_out:
               items = [str(w).rstrip(".") for w in watch_out[:3]]
