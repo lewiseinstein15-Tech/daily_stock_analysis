@@ -100,6 +100,50 @@ def test_apply_account_keys_paper_keys_stay_paper_even_in_live_mode(monkeypatch)
     assert cfg.live_trading_enabled is False
 
 
+# ---------------------------------------------------------------- pocket option
+
+def test_apply_account_keys_pocketoption_demo_forced(monkeypatch):
+    cfg = _wired_config()
+    monkeypatch.delenv("POCKET_OPTION_SSID", raising=False)
+    monkeypatch.delenv("POCKET_OPTION_DEMO", raising=False)
+    payload = {"set": True, "mode": "paper", "brokerName": "pocketoption", "brokerKey": "ssid-demo-token"}
+    monkeypatch.setattr("jexi_market.app_account.requests.get", lambda url, **k: _Resp(payload))
+    assert apply_account_keys(cfg) is True
+    import os
+    assert os.environ["POCKET_OPTION_SSID"] == "ssid-demo-token"
+    assert os.environ["POCKET_OPTION_DEMO"] == "1"          # demo is forced for the demo choice
+    assert cfg.broker == "pocketoption"
+    assert cfg.live_trading_enabled is False
+
+
+def test_apply_account_keys_pocketoption_live_blocked_until_app_mode_live(monkeypatch):
+    cfg = _wired_config()
+    cfg.live_trading_enabled = False
+    monkeypatch.delenv("JEXI_LIVE_TRADING_ENABLED", raising=False)
+    payload = {"set": True, "mode": "paper", "brokerName": "pocketoption-live", "brokerKey": "ssid-live-token"}
+    monkeypatch.setattr("jexi_market.app_account.requests.get", lambda url, **k: _Resp(payload))
+    apply_account_keys(cfg)
+    import os
+    assert os.environ["POCKET_OPTION_DEMO"] == "0"
+    assert "JEXI_LIVE_TRADING_ENABLED" not in os.environ    # app says paper -> live gate stays shut
+    assert cfg.live_trading_enabled is False
+
+
+def test_apply_account_keys_pocketoption_live_enabled_in_live_mode(monkeypatch):
+    cfg = _wired_config()
+    cfg.live_trading_enabled = False
+    monkeypatch.delenv("JEXI_LIVE_TRADING_ENABLED", raising=False)
+    payload = {"set": True, "mode": "live", "brokerName": "pocketoption-live", "brokerKey": "ssid-live-token"}
+    monkeypatch.setattr("jexi_market.app_account.requests.get", lambda url, **k: _Resp(payload))
+    apply_account_keys(cfg)
+    import os
+    assert os.environ["POCKET_OPTION_SSID"] == "ssid-live-token"
+    assert os.environ["POCKET_OPTION_DEMO"] == "0"
+    assert os.environ["JEXI_LIVE_TRADING_ENABLED"] == "1"   # app confirmed live -> adapter gate opened
+    assert cfg.live_trading_enabled is True
+    assert cfg.broker == "pocketoption"
+
+
 def test_apply_account_keys_unreachable_returns_false(monkeypatch):
     cfg = _wired_config()
     import requests as _requests

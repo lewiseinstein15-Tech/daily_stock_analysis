@@ -93,6 +93,14 @@ def apply_account_keys(config) -> bool:
             os.environ.setdefault("BINANCE_API_SECRET", secret)
             if (config.broker or "auto") == "auto":
                 config.broker = "binance"
+        elif broker in ("pocketoption", "pocketoption-live") and key:
+            # Pocket Option / "Pocket Broker": the SSID session string IS the
+            # credential (it encodes the account + demo/live itself).  The app
+            # decides demo vs live — never a stray environment variable.
+            os.environ["POCKET_OPTION_SSID"] = key
+            os.environ["POCKET_OPTION_DEMO"] = "0" if broker == "pocketoption-live" else "1"
+            if (config.broker or "auto") == "auto":
+                config.broker = "pocketoption"
         elif broker == "paper":
             if (config.broker or "auto") == "auto":
                 config.broker = "paper"
@@ -118,6 +126,9 @@ def apply_account_keys(config) -> bool:
         broker = (data.get("brokerName") or "").strip().lower()
         if broker == "alpaca-live":
             config.live_trading_enabled = True
+        elif broker == "pocketoption-live":
+            config.live_trading_enabled = True
+            os.environ["JEXI_LIVE_TRADING_ENABLED"] = "1"
         else:
             logger.info(
                 "jexi app: account is in live mode but broker keys are '%s' — runner stays on the practice endpoint",

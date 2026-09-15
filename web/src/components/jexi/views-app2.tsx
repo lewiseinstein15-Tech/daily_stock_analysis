@@ -1115,18 +1115,19 @@ export function SettingsView({ go, token, user, isAdmin, signOut }: {
                 <div className="panel-2 p-4">
                   <div className="label mb-2.5">Trading account key (broker)</div>
                   <select className="input mb-2.5" value={brokerName} onChange={(e) => setBrokerName(e.target.value)}>
-                    {["alpaca-paper", "alpaca-live", "binance", "paper"].map((p) => (
+                    {["alpaca-paper", "alpaca-live", "pocketoption", "pocketoption-live", "binance", "paper"].map((p) => (
                       <option key={p} value={p}>
                         {p}
                       </option>
                     ))}
                   </select>
                   <div className="grid gap-2">
-                    <input className="input" type="password" placeholder="Broker API key" value={brokerKey} onChange={(e) => setBrokerKey(e.target.value)} />
+                    <input className="input" type="password" placeholder={brokerName.startsWith("pocketoption") ? "Pocket Option SSID session string" : "Broker API key"} value={brokerKey} onChange={(e) => setBrokerKey(e.target.value)} />
                     <input className="input" type="password" placeholder="Broker secret (optional)" value={brokerSecret} onChange={(e) => setBrokerSecret(e.target.value)} />
                   </div>
                   <p className="mt-2 text-[11px] leading-relaxed" style={{ color: "var(--ink-3)" }}>
-                    alpaca-paper = practice broker · alpaca-live = real money. Jexi pulls these keys itself when it
+                    alpaca-paper = practice broker · alpaca-live = real money · pocketoption = Pocket Option (Pocket Broker) demo
+                    · pocketoption-live = Pocket Option real money — paste the SSID session string as the key. Jexi pulls these keys itself when it
                     trades for you — they never sit on GitHub or any outside service.
                   </p>
                 </div>
