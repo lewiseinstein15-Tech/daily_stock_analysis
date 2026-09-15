@@ -34,6 +34,8 @@ lib/
 !web/src/lib/**
 !mobile-app/src/lib/
 !mobile-app/src/lib/**
+!server/lib/
+!server/lib/**
 lib64/
 parts/
 sdist/
