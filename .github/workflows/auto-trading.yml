@@ -1,82 +1,71 @@
-name:  Automated Trading Bot
+# Automated Trading Bot — runs the JEXI Market runner (any broker).
+#
+# This used to drive the legacy Alpaca-only bot, which failed hard the
+# moment the user saved non-Alpaca broker keys (e.g. Pocket Option) in
+# the Jexi app. It now runs the same broker-agnostic watcher as
+# jexi-watch: keys + paper/live mode are pulled from the user's Jexi
+# account at start, every report lands in the app's Notifications feed.
+#
+# Setup (repo Settings -> Secrets and variables -> Actions):
+#   JEXI_AGENT_SECRET   the shared agent secret of your Jexi server
+#   JEXI_APP_EMAIL      the Jexi account email to trade for
+#
+# NOTE: GitHub Actions cron is UTC and drifts with DST. The watcher is
+# market-hours aware; off-by-one-hour only wastes a cycle.
+
+name: Automated Trading Bot
 
 on:
   schedule:
-    # Run every 2 hours during market hours (Mon-Fri, UTC).
-    # NOTE (v0.3): UTC->ET offset drifts with DST — these crons are 9:30 ET
-    # during EST and 10:30 ET during EDT (and 20:00 UTC is 15:00/16:00 ET).
-    # The bot double-checks the Alpaca clock before trading, so off-by-one
-    # hour during EDT only wastes a cycle. For exact ET scheduling, migrate
-    # to the 24/7 runner: `python -m jexi_market.cli run247`.
-    # 9:30 AM ET (Market Open, EST)
-    - cron: '30 14 * * 1-5'
-    # 11:30 AM ET (EST)
-    - cron: '30 16 * * 1-5'
-    # 1:30 PM ET (EST)
-    - cron: '30 18 * * 1-5'
-    # 3:00 PM ET (EST, before market close)
-    - cron: '00 20 * * 1-5'
-
-  # Manual trigger
-  workflow_dispatch:
-    inputs:
-      force:
-        description: 'Force run even when the US market is closed'
-        required: false
-        default: false
-        type: boolean
-      dry_run:
-        description: 'Dry run (plan + report only, never submit orders)'
-        required: false
-        default: false
-        type: boolean
+    # US equity session checkpoints (weekdays, UTC).
+    - cron: '30 14 * * 1-5'   # 9:30 AM ET (EST)
+    - cron: '30 16 * * 1-5'   # 11:30 AM ET (EST)
+    - cron: '30 18 * * 1-5'   # 1:30 PM ET (EST)
+    - cron: '00 20 * * 1-5'   # 3:00 PM ET (EST)
+  workflow_dispatch: {}       # manual runs from the Actions tab
 
 permissions:
   contents: read
+
+concurrency:
+  group: auto-trading
+  cancel-in-progress: false
 
 jobs:
   trading-bot:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
+    env:
+      # Everything the runner needs comes from the user's Jexi account:
+      # broker keys (Alpaca / Binance / Pocket Option), AI keys, and the
+      # paper/live switch. GitHub stores nothing but a door key.
+      JEXI_APP_SERVER: ${{ vars.JEXI_APP_SERVER || 'https://jexi-server.vercel.app' }}
+      JEXI_AGENT_SECRET: ${{ secrets.JEXI_AGENT_SECRET }}
+      JEXI_APP_EMAIL: ${{ secrets.JEXI_APP_EMAIL }}
+      JEXI_SCANNER_UNIVERSE: ${{ secrets.JEXI_SCANNER_UNIVERSE || vars.STOCKS_TO_TRADE || 'AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,SPY,QQQ' }}
+      JEXI_MIN_CONFIDENCE: ${{ secrets.JEXI_MIN_CONFIDENCE || '0.55' }}
+      JEXI_WATCH_INTERVAL: "120"
+      JEXI_PLAIN_ENGLISH: "1"
+      JEXI_NOTIFY_TRIGGERS: "1"
+      JEXI_NOTIFY_DAILY_PLAN: "1"
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.12"
+          cache: pip
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # requests/pytz: bot core. pandas/numpy/python-dotenv/pydantic/
-          # tenacity/fake_useragent: allow the bot's ResearchAgent to import
-          # the repo's own analysis engine (src.stock_analyzer). Without them
-          # it degrades gracefully to the built-in technical scorer.
-          pip install requests pytz pandas numpy python-dotenv pydantic tenacity fake_useragent
+          pip install -r requirements.txt
 
-      - name: Run Trading Bot
-        env:
-          # Everything the bot needs comes from the user's Jexi account:
-          # broker keys, AI keys, paper/live mode. GitHub stores nothing but
-          # a door key (JEXI_AGENT_SECRET) and the account email.
-          JEXI_APP_SERVER: ${{ vars.JEXI_APP_SERVER || 'https://jexi-server.vercel.app' }}
-          JEXI_AGENT_SECRET: ${{ secrets.JEXI_AGENT_SECRET }}
-          JEXI_APP_EMAIL: ${{ secrets.JEXI_APP_EMAIL }}
-          STOCKS_TO_TRADE: ${{ vars.STOCKS_TO_TRADE || 'AAPL,MSFT,NVDA' }}
-          BOT_PAPER_ONLY: ${{ vars.BOT_PAPER_ONLY || 'true' }}
-          BOT_ALLOW_LIVE_TRADING: ${{ vars.BOT_ALLOW_LIVE_TRADING || 'false' }}
-          BOT_USE_LLM_AGENTS: ${{ vars.BOT_USE_LLM_AGENTS || 'false' }}
-          BOT_LLM_AGENTS_REQUIRED: ${{ vars.BOT_LLM_AGENTS_REQUIRED || 'false' }}
-          BOT_LLM_AGENT_WEIGHT: ${{ vars.BOT_LLM_AGENT_WEIGHT || '0.35' }}
-          AGENT_ARCH: ${{ vars.AGENT_ARCH || 'multi' }}
-          AGENT_ORCHESTRATOR_MODE: ${{ vars.AGENT_ORCHESTRATOR_MODE || 'standard' }}
-          LITELLM_MODEL: ${{ vars.LITELLM_MODEL }}
-          BOT_FORCE_RUN: ${{ inputs.force }}
-          BOT_DRY_RUN: ${{ inputs.dry_run }}
-        run: python automated_trading_bot.py
+      - name: Run one full trading cycle (any broker, app decides paper/live)
+        run: |
+          python -m jexi_market watch --once --no-telegram
 
       - name: Notify Jexi app if failed
         if: failure()

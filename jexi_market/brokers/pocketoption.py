@@ -37,6 +37,7 @@ from jexi_market.brokers.base import Broker, BrokerAccount, BrokerOrder, BrokerP
 logger = logging.getLogger(__name__)
 
 DEFAULT_WS_URL = "wss://api-eu.po.market/socket.io/?EIO=4&transport=websocket"
+DEFAULT_DEMO_WS_URL = "wss://demo-api-eu.po.market/socket.io/?EIO=4&transport=websocket"
 
 
 class PocketOptionBroker(Broker):
@@ -55,7 +56,10 @@ class PocketOptionBroker(Broker):
         import os
         self.ssid = os.getenv("POCKET_OPTION_SSID", "").strip()
         self.demo = os.getenv("POCKET_OPTION_DEMO", "1").strip().lower() in {"1", "true", "yes", "on"}
-        self.ws_url = os.getenv("POCKET_OPTION_URL", DEFAULT_WS_URL)
+        # Demo sessions live on demo-api-*.po.market, live on api-*.po.market
+        # (matches what the platform's own browser client connects to).
+        default_url = DEFAULT_DEMO_WS_URL if self.demo else DEFAULT_WS_URL
+        self.ws_url = os.getenv("POCKET_OPTION_URL", "").strip() or default_url
         self._auth = self._parse_ssid(self.ssid)
         self._ws = None
         self._lock = threading.Lock()

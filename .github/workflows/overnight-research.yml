@@ -1,91 +1,113 @@
+# 🌙 Overnight Agent Research — learning + morning plan, NEVER trades.
+#
+# This used to run the legacy Alpaca-only bot in research mode, which
+# failed the moment GitHub secrets were removed (keys now live in the
+# user's Jexi account). It now runs the broker-agnostic runner:
+#
+#   1. self-eval  — closes stale practice trades, updates agent weights
+#                   from real outcomes (the memory keeps learning),
+#   2. plan       — reads the real broker account (whatever broker the
+#                   user saved in the app) and builds tomorrow's plan,
+#   3. pushes a short plain-English summary into the Jexi app feed.
+#
+# No order can be submitted here: neither command trades.
+
 name: 🌙 Overnight Agent Research
 
 on:
   schedule:
-    # Research runs outside the trading window too, but is hard-wired to
-    # research-only + dry-run: it can never submit an order.
     - cron: '0 */4 * * 1-5'
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: read
+
+concurrency:
+  group: overnight-research
+  cancel-in-progress: false
 
 jobs:
   research:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
+    env:
+      JEXI_APP_SERVER: ${{ vars.JEXI_APP_SERVER || 'https://jexi-server.vercel.app' }}
+      JEXI_AGENT_SECRET: ${{ secrets.JEXI_AGENT_SECRET }}
+      JEXI_APP_EMAIL: ${{ secrets.JEXI_APP_EMAIL }}
+      JEXI_PLAIN_ENGLISH: "1"
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.12"
+          cache: pip
 
-      - name: Install deterministic research dependencies
-        env:
-          BOT_USE_LLM_AGENTS: ${{ vars.BOT_USE_LLM_AGENTS || 'false' }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Overnight research (learning + plan, never trades)
         run: |
           set -euo pipefail
-          python -m pip install --upgrade pip
-          pip install requests pytz pandas numpy python-dotenv pydantic tenacity fake_useragent
-          # The repository multi-agent council is opt-in.  Do not add an LLM
-          # package or incur provider cost on a normal overnight run.
-          if [ "${BOT_USE_LLM_AGENTS:-false}" = "true" ]; then
-            pip install litellm json-repair tiktoken openai jinja2 markdown2
-          fi
+          echo "--- self-eval (close stale practice trades, update agent weights)"
+          python -m jexi_market self-eval
+          echo "--- overnight plan (real account, research only)"
+          python -m jexi_market plan --json > /tmp/plan.json
+          python - <<'PY'
+          import json
 
-      - name: Run paper research council (never trades)
-        env:
-          ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
-          ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
-          APCA_API_BASE_URL: ${{ vars.APCA_API_BASE_URL || 'https://paper-api.alpaca.markets' }}
-          ALPACA_DATA_BASE_URL: ${{ vars.ALPACA_DATA_BASE_URL || 'https://data.alpaca.markets' }}
-          NTFY_URL: ${{ secrets.NTFY_URL }}
-          NTFY_SERVER: ${{ vars.NTFY_SERVER || 'https://ntfy.sh' }}
-          NTFY_TOPIC: ${{ vars.NTFY_TOPIC || 'my-stock-report-kenya' }}
-          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
-          STOCKS_TO_TRADE: ${{ vars.STOCKS_TO_TRADE || 'AAPL,MSFT,NVDA' }}
-          BOT_RESEARCH_ONLY: 'true'
-          BOT_DRY_RUN: 'true'
-          BOT_FORCE_RUN: 'true'
-          BOT_PAPER_ONLY: 'true'
-          BOT_USE_LLM_AGENTS: ${{ vars.BOT_USE_LLM_AGENTS || 'false' }}
-          BOT_LLM_AGENTS_REQUIRED: ${{ vars.BOT_LLM_AGENTS_REQUIRED || 'false' }}
-          BOT_LLM_AGENT_WEIGHT: ${{ vars.BOT_LLM_AGENT_WEIGHT || '0.35' }}
-          AGENT_ARCH: ${{ vars.AGENT_ARCH || 'multi' }}
-          AGENT_ORCHESTRATOR_MODE: ${{ vars.AGENT_ORCHESTRATOR_MODE || 'standard' }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          LITELLM_MODEL: ${{ vars.LITELLM_MODEL }}
-        run: python automated_trading_bot.py
+          from jexi_market.config import get_config
+          from jexi_market.app_account import push_notification
 
-      - name: Notify if research failed
+          try:
+              plan = json.load(open("/tmp/plan.json"))
+          except Exception:
+              plan = {}
+
+          def money(v):
+              try:
+                  return f"${float(v):,.2f}"
+              except (TypeError, ValueError):
+                  return "n/a"
+
+          lines = [
+              "Overnight research done — no trades placed.",
+              f"Account: {plan.get('broker_name') or 'broker'} · equity {money(plan.get('equity'))} · "
+              f"cash {money(plan.get('cash'))} · {plan.get('n_positions', 0)} open positions.",
+              f"Room for new positions: {plan.get('max_new_positions', 'n/a')} · "
+              f"risk per trade: {money(plan.get('risk_per_trade_amount'))}.",
+          ]
+          watch_out = plan.get("watch_out") or []
+          if isinstance(watch_out, list) and watch_out:
+              items = [str(w).rstrip(".") for w in watch_out[:3]]
+              lines.append("Watch out: " + "; ".join(items) + ".")
+          notes = plan.get("notes") or []
+          if isinstance(notes, list) and notes:
+              lines.append("Notes: " + " ".join(str(n) for n in notes[:2]))
+
+          push_notification(get_config(), "\n".join(lines), kind="plan", title="🌙 Overnight research")
+          print("overnight summary delivered to the Jexi app")
+          PY
+
+      - name: Notify Jexi app if failed
         if: failure()
         env:
-          NTFY_URL: ${{ secrets.NTFY_URL }}
-          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          JEXI_APP_SERVER: ${{ vars.JEXI_APP_SERVER || 'https://jexi-server.vercel.app' }}
+          JEXI_AGENT_SECRET: ${{ secrets.JEXI_AGENT_SECRET }}
+          JEXI_APP_EMAIL: ${{ secrets.JEXI_APP_EMAIL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          if [ -z "${NTFY_URL:-}" ]; then
-            echo "NTFY_URL secret not set — skipping failure notification."
+          if [ -z "${JEXI_AGENT_SECRET:-}" ] || [ -z "${JEXI_APP_EMAIL:-}" ]; then
+            echo "Jexi app not configured (set JEXI_AGENT_SECRET / JEXI_APP_EMAIL secrets)."
             exit 0
           fi
-          TOPIC="${NTFY_URL##*/}"
-          SERVER="${NTFY_URL%/*}"
-          AUTH_ARGS=()
-          if [ -n "${NTFY_TOKEN:-}" ]; then AUTH_ARGS=(-H "Authorization: Bearer ${NTFY_TOKEN}"); fi
-          jq -n \
-            --arg topic "$TOPIC" \
-            --arg title "❌ Overnight research failed" \
-            --arg message "The paper-only overnight research workflow failed. Inspect the run: $RUN_URL" \
-            '{topic: $topic, title: $title, message: $message, priority: 5, tags: ["warning"]}' \
-          | curl --fail -sS -X POST "$SERVER" \
-              -H "Content-Type: application/json" \
-              "${AUTH_ARGS[@]}" \
-              -d @-
+          curl --fail -sS -X POST "${JEXI_APP_SERVER%/}/api/agent/notify" \
+            -H "x-agent-secret: ${JEXI_AGENT_SECRET}" \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"${JEXI_APP_EMAIL}\",\"kind\":\"warn\",\"title\":\"Overnight research failed\",\"message\":\"The overnight research run did not finish. Nothing was traded - your money and positions are safe.\"}" \
+            && echo "failure notice delivered to the Jexi app"
