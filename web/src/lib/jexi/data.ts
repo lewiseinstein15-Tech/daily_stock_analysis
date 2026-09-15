@@ -415,6 +415,19 @@ export function useAuth() {
       setReady(true);
     };
     hydrate();
+    // Full-page Google sign-in (the Android app shell runs OAuth in the same
+    // window, so no popup/opener exists): the server bounces back here with
+    // #gt=<token>. Turn it into a normal session, then clean the address bar.
+    const gt = window.location.hash.match(/[#&]gt=([^&]+)/);
+    if (gt) {
+      history.replaceState(null, "", location.pathname + location.search);
+      const t = decodeURIComponent(gt[1]);
+      api<{ ok: true; user: JexiUser }>("/api/auth/me", { token: t })
+        .then((r) => {
+          applySession(t, r.user);
+        })
+        .catch(() => {});
+    }
     const onMsg = (e: MessageEvent) => {
       if (e.data?.type === "jexi-google-auth" && e.data.token) {
         applySession(e.data.token, e.data.user);

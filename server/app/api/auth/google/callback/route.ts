@@ -81,11 +81,19 @@ export async function GET(req: Request) {
     return new Response(
       `<!doctype html><html><head><meta charset="utf-8"><title>Signed in</title></head><body>
        <script>
+         var T = ${JSON.stringify(token)};
+         var U = ${JSON.stringify({ id: user.id, email: user.email, name: user.name, role: user.is_admin ? "admin" : "user" })};
+         var O = ${JSON.stringify(targetOrigin)};
          try {
            if (window.opener) {
-             window.opener.postMessage({ type: "jexi-google-auth", token: ${JSON.stringify(token)},
-               user: ${JSON.stringify({ id: user.id, email: user.email, name: user.name, role: user.is_admin ? "admin" : "user" })} }, "*");
+             window.opener.postMessage({ type: "jexi-google-auth", token: T, user: U }, "*");
              window.close();
+           } else {
+             // Full-page flow (e.g. the Android app runs OAuth in the same
+             // window, so there is no popup/opener): bounce back to the site
+             // with the token in the hash, where the app picks it up.
+             location.replace(O + "/#gt=" + encodeURIComponent(T));
+             document.title = "Signed in — returning…";
            }
          } catch (e) {}
          document.body.style.cssText = "font-family:system-ui;background:#14120f;color:#f5f1ea;display:grid;place-items:center;min-height:100vh;margin:0";
