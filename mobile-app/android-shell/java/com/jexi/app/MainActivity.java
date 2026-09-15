@@ -33,14 +33,10 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import org.json.JSONObject;
-import java.io.BufferedReader;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
-import java.nio.charset.StandardCharsets;
 
 /**
  * Jexi app shell.
@@ -49,8 +45,11 @@ import java.nio.charset.StandardCharsets;
  * shows (same sign-in page, same everything, always current).
  *
  * Native extras:
- *  - IN-APP UPDATES: the update gate downloads the new APK inside the app with
- *    a live progress bar, then hands it to Android's installer. No browser.
+ *  - NO update screen at startup. The app always opens straight into JEXI.
+ *  - App updates live in the site's Settings page: the web detects the shell
+ *    version through the "jexiNative" bridge and calls installUpdate(url),
+ *    which downloads the APK in-app with a live progress bar and hands it to
+ *    Android's installer. On the web the same button downloads normally.
  *  - offline screen with retry;
  *  - Google sign-in: popups do not exist in a WebView, so window.open is
  *    redirected into this window; the server callback bounces back to the
@@ -59,8 +58,7 @@ import java.nio.charset.StandardCharsets;
 public class MainActivity extends Activity {
 
     private static final String SITE_URL = "https://jexi-web.vercel.app";
-    private static final String VERSION_URL = "https://jexi-server.vercel.app/api/version";
-    private static final String SHELL_VERSION = "1.5.0";
+    private static final String SHELL_VERSION = "1.6.0";
     private static final String BG = "#0c0b09";
     private static final int REQ_INSTALL_PERM = 4242;
 
@@ -90,6 +88,9 @@ public class MainActivity extends Activity {
         s.setAllowContentAccess(false);
         s.setSupportZoom(false);
         s.setMediaPlaybackRequiresUserGesture(false);
+        // window.open must open a real "window" for the popup bridge below.
+        s.setSupportMultipleWindows(true);
+        s.setJavaScriptCanOpenWindowsAutomatically(true);
         // Look like Chrome, not a WebView: keeps Google sign-in happy.
         String ua = s.getUserAgentString();
         if (ua != null) {
@@ -99,6 +100,21 @@ public class MainActivity extends Activity {
         CookieManager cm = CookieManager.getInstance();
         cm.setAcceptCookie(true);
         cm.setAcceptThirdPartyCookies(web, true);
+
+        // Bridge used by the site's Settings page ("App update" card).
+        web.addJavascriptInterface(new NativeBridge(), "jexiNative");
+
+        // Any .apk link clicked anywhere goes through the in-app updater.
+        web.setDownloadListener((url, agent, disposition, mimetype, contentLength) -> {
+            if (url != null && url.endsWith(".apk")) {
+                startUpdateFlow(url);
+            } else if (url != null && (url.startsWith("http://") || url.startsWith("https://"))) {
+                try {
+                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                } catch (Exception ignored) {
+                }
+            }
+        });
 
         web.setBackgroundColor(Color.parseColor(BG));
         web.setOverScrollMode(View.OVER_SCROLL_NEVER);
@@ -182,8 +198,6 @@ public class MainActivity extends Activity {
             web.loadUrl(SITE_URL);
         }
         setContentView(rootView());
-
-        checkVersion();
     }
 
     private View rootView() {
@@ -201,53 +215,7 @@ public class MainActivity extends Activity {
         return root;
     }
 
-    // ---------------- update gate ----------------
-
-    private void checkVersion() {
-        new Thread(() -> {
-            String minRequired = null, latest = "", notes = "", downloadUrl = "";
-            try {
-                HttpURLConnection c = (HttpURLConnection) new URL(VERSION_URL).openConnection();
-                c.setConnectTimeout(8000);
-                c.setReadTimeout(8000);
-                c.setRequestProperty("Accept", "application/json");
-                StringBuilder sb = new StringBuilder();
-                try (BufferedReader r = new BufferedReader(
-                        new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = r.readLine()) != null) sb.append(line);
-                }
-                JSONObject j = new JSONObject(sb.toString());
-                minRequired = j.optString("minRequired", null);
-                latest = j.optString("latest", "");
-                notes = j.optString("notes", "");
-                downloadUrl = j.optString("url", "");
-            } catch (Exception ignored) {
-                return; // server unreachable: the site itself will show an error state
-            }
-            if (minRequired != null && !minRequired.isEmpty()
-                    && semverLt(SHELL_VERSION, minRequired) && !downloadUrl.isEmpty()) {
-                final String dl = downloadUrl, nt = notes, lt = latest;
-                ui.post(() -> {
-                    if (isFinishing() || overlay != null) return;
-                    lastUpdateUrl = dl;
-                    showOverlay(buildMessageScreen(
-                            "Update your app" + (lt.isEmpty() ? "" : "  ·  v" + lt),
-                            (nt.isEmpty() ? "A newer version of the Jexi app is ready." : nt + "\n\n")
-                                    + "The update downloads inside the app — you'll see the progress. "
-                                    + "Android may ask one time for permission to install it.",
-                            "Update now", v -> startUpdateFlow(lastUpdateUrl),
-                            "Open in browser instead",
-                            v -> {
-                                try {
-                                    startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(lastUpdateUrl)));
-                                } catch (Exception ignored) {
-                                }
-                            }));
-                });
-            }
-        }).start();
-    }
+    // ---------------- updates (triggered from the site's Settings page) ----------------
 
     private void startUpdateFlow(String url) {
         if (url == null || url.isEmpty() || updating) return;
@@ -414,7 +382,27 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    /**
+     * Small bridge the web Settings page uses: it reads the shell version and
+     * asks the app to download + install an update in place (progress bar,
+     * then Android's installer). Only methods annotated @JavascriptInterface
+     * are exposed, and only our own site is allowed to load in this WebView.
+     */
+    private class NativeBridge {
+        @android.webkit.JavascriptInterface
+        public String appVersion() {
+            return SHELL_VERSION;
+        }
+
+        @android.webkit.JavascriptInterface
+        public void installUpdate(String url) {
+            if (url == null || !url.startsWith("https://")) return;
+            ui.post(() -> startUpdateFlow(url));
+        }
+    }
+
     static boolean semverLt(String a, String b) {
+        // Kept for future use (server-driven minimums); not used for gating anymore.
         try {
             String[] pa = a.split("\\."), pb = b.split("\\.");
             int n = Math.max(pa.length, pb.length);
@@ -522,6 +510,13 @@ public class MainActivity extends Activity {
         } else {
             super.onBackPressed();
         }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        // Persist session cookies so sign-in survives the app closing.
+        CookieManager.getInstance().flush();
     }
 
     @Override

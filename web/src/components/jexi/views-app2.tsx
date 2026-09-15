@@ -7,10 +7,11 @@ import { AreaChart, CHART_COLORS, ConvictionDial, Donut } from "@/components/jex
 import { Delta, EmptyState, LiveDot, Panel, Pill, SectionTitle, Stat } from "@/components/jexi/bits";
 import {
   AccountInfo,
-  APP_VERSION,
   Profits,
   UNIVERSE,
+  checkAppUpdate,
   fetchKeys,
+  installAppUpdate,
   money,
   moneyCompact,
   priceFmt,
@@ -628,10 +629,12 @@ export function SettingsView({ go, token, user, isAdmin, signOut }: {
   const [brokerKey, setBrokerKey] = useState("");
   const [brokerSecret, setBrokerSecret] = useState("");
   const [keysMsg, setKeysMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [appUpd, setAppUpd] = useState<{ shell: string | null; update: { latest: string; notes: string; url: string } | null } | null>(null);
 
   useEffect(() => {
     import("@/lib/jexi/data").then((m) => setUrl(m.getServerUrl()));
     if (token) fetchKeys(token).then(setKeys).catch(() => {});
+    checkAppUpdate().then(setAppUpd).catch(() => {});
   }, [token]);
 
   const check = async () => {
@@ -727,15 +730,23 @@ export function SettingsView({ go, token, user, isAdmin, signOut }: {
               <ArrowRight size={14} style={{ color: "var(--ink-3)" }} />
             </button>
           </div>
-          <div className="mt-3 flex items-center justify-between border-t pt-3 text-[12.5px]" style={{ borderColor: "var(--line-soft)" }}>
+          <div className="mt-3 flex items-center justify-between gap-3 border-t pt-3 text-[12.5px]" style={{ borderColor: "var(--line-soft)" }}>
             <span style={{ color: "var(--ink-3)" }}>
-              App version <b className="data" style={{ color: "var(--ink-2)" }}>{APP_VERSION}</b>
+              App version <b className="data" style={{ color: "var(--ink-2)" }}>{appUpd?.shell || "web"}</b>
+              {appUpd?.shell && appUpd?.update && <span> · {appUpd.update.latest} ready</span>}
             </span>
-            <Pill tone="up">up to date</Pill>
+            {appUpd?.shell && appUpd?.update ? (
+              <button className="btn btn-primary" style={{ minHeight: 34 }} onClick={() => installAppUpdate(appUpd.update!.url)}>
+                <RefreshCw size={13} /> Update app
+              </button>
+            ) : (
+              <Pill tone="up">up to date</Pill>
+            )}
           </div>
           <p className="mt-2 text-[11.5px] leading-relaxed" style={{ color: "var(--ink-3)" }}>
-            JEXI checks the server for newer versions automatically. If an update is required, an
-            &ldquo;Update your app&rdquo; screen appears before anything else.
+            No update screens at startup — the app always opens straight into JEXI. Updates live here:
+            tap &ldquo;Update app&rdquo; and the app downloads the new version itself, shows a progress bar, then
+            Android asks you to install it. On the web you are always current.
           </p>
         </Panel>
 

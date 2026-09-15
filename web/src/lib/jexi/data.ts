@@ -135,58 +135,61 @@ export interface AdminOverview {
   withdrawals: { id: number; email: string; amount: number; method: string; status: string; createdAt: string }[];
 }
 
-// ---------------- app version + update check ----------------
+// ---------------- app version + updates ----------------
+// The site is always current (it IS the live web app), so there is no
+// blocking update screen here. The Android shell reports its own version
+// through window.jexiNative (see MainActivity), and app updates live in
+// Settings -> "App update" (shellVersion + checkAppUpdate below).
 
-export const APP_VERSION = "1.2.0";
+export function shellVersion(): string | null {
+  if (typeof window === "undefined") return null;
+  const n = (window as unknown as { jexiNative?: { appVersion?: () => string } }).jexiNative;
+  try {
+    const v = n?.appVersion?.();
+    return v ? String(v) : null;
+  } catch {
+    return null;
+  }
+}
 
-export interface VersionInfo {
+export interface AppUpdateInfo {
   latest: string;
-  minRequired: string;
   notes: string;
   url: string;
 }
 
-function compareSemver(a: string, b: string): number {
+export async function checkAppUpdate(): Promise<{ shell: string | null; update: AppUpdateInfo | null }> {
+  const shell = shellVersion();
+  try {
+    const r = await api<{ ok: boolean; latest: string; notes: string; url: string }>("/api/version");
+    const update = r.latest && shell && compareVersions(shell, r.latest) < 0
+      ? { latest: r.latest, notes: r.notes, url: r.url }
+      : null;
+    return { shell, update };
+  } catch {
+    return { shell, update: null };
+  }
+}
+
+export function compareVersions(a: string, b: string): number {
   const pa = a.split(".").map(Number);
   const pb = b.split(".").map(Number);
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
     const d = (pa[i] || 0) - (pb[i] || 0);
     if (d !== 0) return d;
   }
   return 0;
 }
 
-export function useUpdateCheck(pollMs = 30 * 60_000): {
-  status: "ok" | "optional" | "required" | "offline";
-  info: VersionInfo | null;
-} {
-  const [state, setState] = useState<{ status: "ok" | "optional" | "required" | "offline"; info: VersionInfo | null }>({
-    status: "ok",
-    info: null,
-  });
-  useEffect(() => {
-    let alive = true;
-    const check = () => {
-      api<VersionInfo & { ok: boolean }>("/api/version")
-        .then((r) => {
-          if (!alive) return;
-          const behindLatest = compareSemver(APP_VERSION, r.latest) < 0;
-          const behindMin = compareSemver(APP_VERSION, r.minRequired) < 0;
-          setState({
-            status: behindMin ? "required" : behindLatest ? "optional" : "ok",
-            info: { latest: r.latest, minRequired: r.minRequired, notes: r.notes, url: r.url },
-          });
-        })
-        .catch(() => alive && setState((s) => (s.status === "required" ? s : { status: "offline", info: null })));
-    };
-    check();
-    const id = setInterval(check, pollMs);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, [pollMs]);
-  return state;
+export function installAppUpdate(url: string): void {
+  const w = window as unknown as { jexiNative?: { installUpdate?: (u: string) => void } };
+  if (w.jexiNative?.installUpdate) {
+    // Inside the Android app: download in-app with a progress bar, then install.
+    w.jexiNative.installUpdate(url);
+  } else {
+    // Browser or old shell: hand the APK to the normal download flow.
+    window.location.assign(url);
+  }
 }
 
 // ---------------- real market wire (guest activity, computed from live quotes) ----------------

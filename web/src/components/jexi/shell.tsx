@@ -9,7 +9,7 @@ import { AuthView, Landing } from "@/components/jexi/views-public";
 import { AssetView, CommandView, MarketsView } from "@/components/jexi/views-app";
 import { AlertsView, IntelligenceView, PortfolioView, SettingsView } from "@/components/jexi/views-app2";
 import { PrivacyView, TermsView } from "@/components/jexi/views-legal";
-import { APP_VERSION, UNIVERSE, useAccount, useAuth, useFeed, useProfits, useUpdateCheck } from "@/lib/jexi/data";
+import { UNIVERSE, useAccount, useAuth, useFeed, useProfits } from "@/lib/jexi/data";
 
 type View = "landing" | "auth" | "command" | "markets" | "asset" | "portfolio" | "intelligence" | "alerts" | "settings" | "legal";
 
@@ -56,8 +56,6 @@ export function JexiApp() {
   const liveFeed = useFeed(token);
   const profits = useProfits(token);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const update = useUpdateCheck();
-  const [updateDismissed, setUpdateDismissed] = useState(false);
 
   useEffect(() => {
     // defer the first hash read so we never setState synchronously inside the effect
@@ -178,55 +176,6 @@ export function JexiApp() {
           </div>
         </div>
       </header>
-
-      {/* required update = full gate, optional = dismissible banner */}
-      {update.status === "required" && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center px-5" style={{ background: "rgba(10,8,6,.94)", backdropFilter: "blur(8px)" }}>
-          <div className="panel max-w-md p-8 text-center" style={{ animation: "jexi-rise 200ms var(--ease) both" }}>
-            <JexiMark size={54} />
-            <h2 className="display mt-5 text-[26px]">Update your app</h2>
-            <p className="mt-2.5 text-[13.5px] leading-relaxed" style={{ color: "var(--ink-2)" }}>
-              You are running JEXI {APP_VERSION}, but version {update.info?.minRequired || ""} or newer is
-              required to keep everything working correctly.
-            </p>
-            {update.info?.notes && (
-              <p className="mt-2 text-[12.5px]" style={{ color: "var(--ink-3)" }}>
-                What&apos;s new: {update.info.notes}
-              </p>
-            )}
-            <button className="btn btn-primary mt-6 w-full" onClick={() => window.location.reload()}>
-              <RefreshCw size={15} /> Update now
-            </button>
-            {update.info?.url && (
-              <a
-                href={update.info.url}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-3 block text-[12.5px] underline-offset-2 hover:underline"
-                style={{ color: "var(--ink-3)" }}
-              >
-                Or download the latest version
-              </a>
-            )}
-          </div>
-        </div>
-      )}
-      {update.status === "optional" && !updateDismissed && (
-        <div
-          className="sticky top-[64px] z-30 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 px-5 py-2.5 text-[13px]"
-          style={{ background: "color-mix(in srgb, var(--ember) 12%, var(--bg))", borderBottom: "1px solid var(--line-soft)", color: "var(--ink-2)" }}
-        >
-          <span>
-            JEXI <b style={{ color: "var(--ink)" }}>{update.info?.latest}</b> is available — you are on {APP_VERSION}.
-          </span>
-          <button className="row-link inline-flex items-center gap-1.5 font-semibold" style={{ color: "var(--ember)" }} onClick={() => window.location.reload()}>
-            <RefreshCw size={13} /> Update now
-          </button>
-          <button aria-label="Dismiss update banner" onClick={() => setUpdateDismissed(true)} style={{ color: "var(--ink-3)" }}>
-            <X size={14} />
-          </button>
-        </div>
-      )}
 
       <main className="relative mx-auto w-full max-w-6xl px-5 pb-28 pt-6 md:pb-14">{content}</main>
 
