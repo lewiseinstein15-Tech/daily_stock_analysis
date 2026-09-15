@@ -49,6 +49,11 @@ export async function api<T = Record<string, unknown>>(
     signal: AbortSignal.timeout(15000),
   });
   const json = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
+  // Session expired or revoked: let the auth layer sign the user out cleanly
+  // instead of showing broken member UI forever.
+  if (res.status === 401 && opts.token) {
+    if (typeof window !== "undefined") window.dispatchEvent(new Event("jexi.unauthorized"));
+  }
   if (!res.ok || json.ok === false) throw new Error(json.error || `HTTP ${res.status}`);
   return json as T;
 }
@@ -415,8 +420,20 @@ export function useAuth() {
         applySession(e.data.token, e.data.user);
       }
     };
+    // Server rejected our session (401): wipe it and fall back to guest view.
+    const onUnauthorized = () => {
+      localStorage.removeItem("jexi.token");
+      localStorage.removeItem("jexi.user");
+      userRef.current = null;
+      setTok(null);
+      setUser(null);
+    };
     window.addEventListener("message", onMsg);
-    return () => window.removeEventListener("message", onMsg);
+    window.addEventListener("jexi.unauthorized", onUnauthorized);
+    return () => {
+      window.removeEventListener("message", onMsg);
+      window.removeEventListener("jexi.unauthorized", onUnauthorized);
+    };
   }, [applySession]);
 
   const signOut = useCallback(() => {
