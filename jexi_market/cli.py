@@ -153,10 +153,10 @@ def cmd_memory(args: argparse.Namespace) -> int:
 
 def cmd_test_push(args: argparse.Namespace) -> int:
     from datetime import datetime, timezone
-    from jexi_market.notifications import NtfyReporter
+    from jexi_market.notifications import make_reporter
 
     config = get_config()
-    reporter = NtfyReporter(config)
+    reporter = make_reporter(config)
     title = "JEXI Market — Connectivity Test"
     body = f"Connectivity check at {datetime.now(timezone.utc).isoformat(timespec='seconds')}Z.\nIf you see this, ntfy is correctly configured."
     ok = reporter.publish(title, body, priority="default", tags=["tada", "rocket"])
@@ -506,8 +506,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
 
 def cmd_notify(args: argparse.Namespace) -> int:
     """Send a plain-English test message to your ntfy app."""
-    from jexi_market.notifications.reporter import NtfyReporter
-    reporter = NtfyReporter(get_config())
+    from jexi_market.notifications import make_reporter
+    reporter = make_reporter(get_config())
     ok = reporter.publish(
         "JEXI is connected to your phone",
         (

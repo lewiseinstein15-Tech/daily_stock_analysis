@@ -26,6 +26,10 @@ CREATE TABLE IF NOT EXISTS accounts (
   starting_balance REAL NOT NULL DEFAULT 10000,
   mode TEXT NOT NULL DEFAULT 'paper',
   last_tick TEXT DEFAULT '',
+  paper_cash REAL,
+  paper_starting REAL,
+  live_cash REAL DEFAULT 0,
+  live_starting REAL DEFAULT 0,
   updated_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -37,7 +41,8 @@ CREATE TABLE IF NOT EXISTS positions (
   avg_price REAL NOT NULL,
   last_price REAL NOT NULL DEFAULT 0,
   opened_at TEXT DEFAULT (datetime('now')),
-  UNIQUE(user_id, symbol)
+  mode TEXT NOT NULL DEFAULT 'paper',
+  UNIQUE(user_id, symbol, mode)
 );
 
 CREATE TABLE IF NOT EXISTS trades (
@@ -51,6 +56,7 @@ CREATE TABLE IF NOT EXISTS trades (
   pnl REAL NOT NULL DEFAULT 0,
   reason TEXT DEFAULT '',
   status TEXT NOT NULL DEFAULT 'filled',
+  mode TEXT NOT NULL DEFAULT 'paper',
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -61,6 +67,18 @@ CREATE TABLE IF NOT EXISTS withdrawals (
   method TEXT DEFAULT 'bank',
   destination TEXT DEFAULT '',
   status TEXT NOT NULL DEFAULT 'approved',
+  mode TEXT NOT NULL DEFAULT 'paper',
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS deposits (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  amount REAL NOT NULL,
+  method TEXT DEFAULT 'm-pesa',
+  destination TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'approved',
+  mode TEXT NOT NULL DEFAULT 'paper',
   created_at TEXT DEFAULT (datetime('now'))
 );
 
@@ -68,6 +86,7 @@ CREATE TABLE IF NOT EXISTS equity_snapshots (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL REFERENCES users(id),
   equity REAL NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'paper',
   created_at TEXT DEFAULT (datetime('now'))
 );
 

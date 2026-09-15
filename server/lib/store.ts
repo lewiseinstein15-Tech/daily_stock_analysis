@@ -21,6 +21,12 @@ export interface Account {
   starting_balance: number;
   mode: string;
   last_tick: string;
+  // Per-mode ledgers. `cash` / `starting_balance` above always mirror the
+  // CURRENT mode so every existing reader keeps working untouched.
+  paper_cash?: number;
+  paper_starting?: number;
+  live_cash?: number;
+  live_starting?: number;
 }
 export interface Position {
   symbol: string;
@@ -41,6 +47,7 @@ export interface Trade {
   reason: string;
   status: string;
   created_at: string;
+  mode?: string;
 }
 export interface Withdrawal {
   id: number;
@@ -50,6 +57,17 @@ export interface Withdrawal {
   destination: string;
   status: string;
   created_at: string;
+  mode?: string;
+}
+export interface Deposit {
+  id: number;
+  user_id: number;
+  amount: number;
+  method: string;
+  destination: string;
+  status: string;
+  created_at: string;
+  mode?: string;
 }
 export interface FeedEvent {
   id: number;
@@ -67,6 +85,7 @@ export interface NewTrade {
   amount: number;
   pnl: number;
   reason: string;
+  mode?: string;
 }
 
 export interface AdminUserRow {
@@ -93,16 +112,19 @@ export function startingBalance(): number {
 
 const nowSql = () => new Date().toISOString().slice(0, 19).replace("T", " ");
 
+const normMode = (m?: string) => (m === "live" ? "live" : "paper");
+
 // ================= memory driver (local dev + tests) =================
 class MemoryStore {
   driver = "memory" as const;
   private users: (User & { created_at: string })[] = [];
   private accounts = new Map<number, Account>();
-  private positions: (Position & { user_id: number; id: number })[] = [];
+  private positions: (Position & { user_id: number; id: number; mode: string })[] = [];
   private trades: (Trade & { user_id: number })[] = [];
   private withdrawals: (Withdrawal & { user_id: number })[] = [];
+  private deposits: (Deposit & { user_id: number })[] = [];
   private events: (FeedEvent & { user_id: number })[] = [];
-  private equity: { user_id: number; equity: number; created_at: string; id: number }[] = [];
+  private equity: { user_id: number; equity: number; created_at: string; id: number; mode: string }[] = [];
   private keys = new Map<number, KeysRow>();
   private seq = 1;
 
@@ -135,7 +157,17 @@ class MemoryStore {
   async ensureAccount(userId: number, starting: number): Promise<Account> {
     let acc = this.accounts.get(userId);
     if (!acc) {
-      acc = { user_id: userId, cash: starting, starting_balance: starting, mode: "paper", last_tick: "" };
+      acc = {
+        user_id: userId,
+        cash: starting,
+        starting_balance: starting,
+        mode: "paper",
+        last_tick: "",
+        paper_cash: starting,
+        paper_starting: starting,
+        live_cash: 0,
+        live_starting: 0,
+      };
       this.accounts.set(userId, acc);
     }
     return acc;
@@ -149,38 +181,77 @@ class MemoryStore {
   }
   async setCash(userId: number, cash: number) {
     const acc = this.accounts.get(userId);
-    if (acc) acc.cash = cash;
+    if (acc) {
+      acc.cash = cash;
+      if (acc.mode === "live") acc.live_cash = cash;
+      else acc.paper_cash = cash;
+    }
   }
-  async getPositions(userId: number): Promise<Position[]> {
+  // Swap the active book: park the current cash/starting into its mode slot
+  // and promote the other mode's slot into the live fields.
+  async switchMode(userId: number, newMode: string): Promise<Account | null> {
+    const acc = this.accounts.get(userId);
+    if (!acc) return null;
+    const cur = normMode(acc.mode);
+    const target = normMode(newMode);
+    if (cur === target) return acc;
+    if (cur === "paper") {
+      acc.paper_cash = acc.cash;
+      acc.paper_starting = acc.starting_balance;
+      acc.cash = acc.live_cash ?? 0;
+      acc.starting_balance = acc.live_starting ?? 0;
+    } else {
+      acc.live_cash = acc.cash;
+      acc.live_starting = acc.starting_balance;
+      acc.cash = acc.paper_cash ?? startingBalance();
+      acc.starting_balance = acc.paper_starting ?? startingBalance();
+    }
+    acc.mode = target;
+    return acc;
+  }
+  async getPositions(userId: number, mode = "paper"): Promise<Position[]> {
     return this.positions
-      .filter((p) => p.user_id === userId)
-      .map(({ user_id, id, ...p }) => p);
+      .filter((p) => p.user_id === userId && p.mode === normMode(mode))
+      .map(({ user_id, id, mode: _m, ...p }) => p);
   }
-  async upsertPosition(p: { user_id: number; symbol: string; qty: number; avg_price: number; last_price: number }) {
-    const existing = this.positions.find((x) => x.user_id === p.user_id && x.symbol === p.symbol);
+  async upsertPosition(p: {
+    user_id: number;
+    symbol: string;
+    qty: number;
+    avg_price: number;
+    last_price: number;
+    mode?: string;
+  }) {
+    const mode = normMode(p.mode);
+    const existing = this.positions.find(
+      (x) => x.user_id === p.user_id && x.symbol === p.symbol && x.mode === mode
+    );
     if (existing) {
       existing.qty = p.qty;
       existing.avg_price = p.avg_price;
       existing.last_price = p.last_price;
     } else {
-      this.positions.push({ id: this.nextId(), ...p, opened_at: nowSql() });
+      this.positions.push({ id: this.nextId(), ...p, mode, opened_at: nowSql() });
     }
   }
-  async updatePositionPrice(userId: number, symbol: string, lastPrice: number) {
-    const p = this.positions.find((x) => x.user_id === userId && x.symbol === symbol);
+  async updatePositionPrice(userId: number, symbol: string, lastPrice: number, mode = "paper") {
+    const p = this.positions.find(
+      (x) => x.user_id === userId && x.symbol === symbol && x.mode === normMode(mode)
+    );
     if (p) p.last_price = lastPrice;
   }
-  async deletePosition(userId: number, symbol: string) {
-    this.positions = this.positions.filter((x) => !(x.user_id === userId && x.symbol === symbol));
+  async deletePosition(userId: number, symbol: string, mode = "paper") {
+    this.positions = this.positions.filter(
+      (x) => !(x.user_id === userId && x.symbol === symbol && x.mode === normMode(mode))
+    );
   }
   async recordTrade(t: NewTrade) {
-    this.trades.push({ id: this.nextId(), status: "filled", created_at: nowSql(), ...t });
+    this.trades.push({ id: this.nextId(), status: "filled", created_at: nowSql(), mode: normMode(t.mode), ...t });
   }
-  async listTrades(userId: number, limit: number): Promise<Trade[]> {
-    return this.trades
-      .filter((t) => t.user_id === userId)
-      .slice(-limit)
-      .reverse();
+  async listTrades(userId: number, limit: number, mode?: string): Promise<Trade[]> {
+    let rows = this.trades.filter((t) => t.user_id === userId);
+    if (mode) rows = rows.filter((t) => t.mode === normMode(mode));
+    return rows.slice(-limit).reverse();
   }
   async listRecentTradesAll(limit: number) {
     return this.trades.slice(-limit).reverse();
@@ -200,29 +271,82 @@ class MemoryStore {
   async setKeys(userId: number, row: KeysRow) {
     this.keys.set(userId, row);
   }
-  async insertWithdrawal(userId: number, amount: number, method: string, destination: string) {
+  async insertWithdrawal(
+    userId: number,
+    amount: number,
+    method: string,
+    destination: string,
+    mode = "paper",
+    status = "approved"
+  ) {
     this.withdrawals.push({
       id: this.nextId(),
       user_id: userId,
       amount,
       method,
       destination,
-      status: "approved",
+      status,
+      mode: normMode(mode),
       created_at: nowSql(),
     });
   }
-  async listWithdrawals(userId: number): Promise<Withdrawal[]> {
-    return this.withdrawals.filter((w) => w.user_id === userId).reverse();
+  async listWithdrawals(userId: number, mode?: string): Promise<Withdrawal[]> {
+    let rows = this.withdrawals.filter((w) => w.user_id === userId);
+    if (mode) rows = rows.filter((w) => w.mode === normMode(mode));
+    return rows.reverse();
   }
   async listWithdrawalsAll(limit: number) {
     return this.withdrawals.slice(-limit).reverse();
   }
-  async insertEquity(userId: number, equity: number) {
-    this.equity.push({ id: this.nextId(), user_id: userId, equity, created_at: nowSql() });
+  async setWithdrawalStatus(id: number, status: string) {
+    const w = this.withdrawals.find((x) => x.id === id);
+    if (w) w.status = status;
   }
-  async listEquity(userId: number, limit: number) {
+  async getWithdrawal(id: number) {
+    return this.withdrawals.find((x) => x.id === id) || null;
+  }
+  async insertDeposit(
+    userId: number,
+    amount: number,
+    method: string,
+    destination: string,
+    mode = "paper",
+    status = "approved"
+  ) {
+    const d: Deposit & { user_id: number } = {
+      id: this.nextId(),
+      user_id: userId,
+      amount,
+      method,
+      destination,
+      status,
+      mode: normMode(mode),
+      created_at: nowSql(),
+    };
+    this.deposits.push(d);
+    return d;
+  }
+  async listDeposits(userId: number, mode?: string): Promise<Deposit[]> {
+    let rows = this.deposits.filter((d) => d.user_id === userId);
+    if (mode) rows = rows.filter((d) => d.mode === normMode(mode));
+    return rows.reverse();
+  }
+  async listDepositsAll(limit: number) {
+    return this.deposits.slice(-limit).reverse();
+  }
+  async getDeposit(id: number) {
+    return this.deposits.find((x) => x.id === id) || null;
+  }
+  async setDepositStatus(id: number, status: string) {
+    const d = this.deposits.find((x) => x.id === id);
+    if (d) d.status = status;
+  }
+  async insertEquity(userId: number, equity: number, mode = "paper") {
+    this.equity.push({ id: this.nextId(), user_id: userId, equity, created_at: nowSql(), mode: normMode(mode) });
+  }
+  async listEquity(userId: number, limit: number, mode = "paper") {
     return this.equity
-      .filter((e) => e.user_id === userId)
+      .filter((e) => e.user_id === userId && e.mode === normMode(mode))
       .slice(-limit)
       .map((e) => ({ created_at: e.created_at, equity: e.equity }));
   }
@@ -267,6 +391,13 @@ class MemoryStore {
 }
 
 // ================= D1 driver (production) =================
+const ACC_SELECT = `SELECT user_id, cash, starting_balance, mode, last_tick,
+  COALESCE(paper_cash, cash) AS paper_cash,
+  COALESCE(paper_starting, starting_balance) AS paper_starting,
+  COALESCE(live_cash, 0) AS live_cash,
+  COALESCE(live_starting, 0) AS live_starting
+  FROM accounts WHERE user_id = ? LIMIT 1`;
+
 class D1Store {
   driver = "d1" as const;
 
@@ -292,53 +423,113 @@ class D1Store {
   }
   async ensureAccount(userId: number, starting: number): Promise<Account> {
     await d1Query(
-      "INSERT OR IGNORE INTO accounts (user_id, cash, starting_balance, mode, last_tick) VALUES (?, ?, ?, 'paper', '')",
-      [userId, starting, starting]
+      `INSERT OR IGNORE INTO accounts (user_id, cash, starting_balance, mode, last_tick,
+        paper_cash, paper_starting, live_cash, live_starting)
+       VALUES (?, ?, ?, 'paper', '', ?, ?, 0, 0)`,
+      [userId, starting, starting, starting, starting]
     );
-    const r = await d1Query<Account>("SELECT * FROM accounts WHERE user_id = ? LIMIT 1", [userId]);
-    return r.rows[0] || { user_id: userId, cash: starting, starting_balance: starting, mode: "paper", last_tick: "" };
+    const r = await d1Query<Account>(ACC_SELECT, [userId]);
+    return (
+      r.rows[0] || {
+        user_id: userId,
+        cash: starting,
+        starting_balance: starting,
+        mode: "paper",
+        last_tick: "",
+      }
+    );
   }
   async getAccount(userId: number) {
-    const r = await d1Query<Account>("SELECT * FROM accounts WHERE user_id = ? LIMIT 1", [userId]);
+    const r = await d1Query<Account>(ACC_SELECT, [userId]);
     return r.rows[0] || null;
   }
   async setLastTick(userId: number, ts: string) {
     await d1Query("UPDATE accounts SET last_tick = ?, updated_at = ? WHERE user_id = ?", [ts, nowSql(), userId]);
   }
   async setCash(userId: number, cash: number) {
-    await d1Query("UPDATE accounts SET cash = ?, updated_at = ? WHERE user_id = ?", [cash, nowSql(), userId]);
+    // Keep the mirror + the active mode's slot in sync in one statement.
+    await d1Query(
+      `UPDATE accounts SET cash = ?,
+        paper_cash = CASE WHEN mode = 'paper' THEN ? ELSE paper_cash END,
+        live_cash  = CASE WHEN mode = 'live'  THEN ? ELSE live_cash  END,
+        updated_at = ? WHERE user_id = ?`,
+      [cash, cash, cash, nowSql(), userId]
+    );
   }
-  async getPositions(userId: number): Promise<Position[]> {
+  async switchMode(userId: number, newMode: string): Promise<Account | null> {
+    const acc = await this.getAccount(userId);
+    if (!acc) return null;
+    const cur = normMode(acc.mode);
+    const target = normMode(newMode);
+    if (cur === target) return acc;
+    if (cur === "paper") {
+      await d1Query(
+        `UPDATE accounts SET
+           paper_cash = cash, paper_starting = starting_balance,
+           cash = COALESCE(live_cash, 0), starting_balance = COALESCE(live_starting, 0),
+           mode = 'live', updated_at = ?
+         WHERE user_id = ?`,
+        [nowSql(), userId]
+      );
+    } else {
+      await d1Query(
+        `UPDATE accounts SET
+           live_cash = cash, live_starting = starting_balance,
+           cash = COALESCE(paper_cash, ?), starting_balance = COALESCE(paper_starting, ?),
+           mode = 'paper', updated_at = ?
+         WHERE user_id = ?`,
+        [startingBalance(), startingBalance(), nowSql(), userId]
+      );
+    }
+    return this.getAccount(userId);
+  }
+  async getPositions(userId: number, mode = "paper"): Promise<Position[]> {
     const r = await d1Query<Position>(
-      "SELECT symbol, qty, avg_price, last_price, opened_at FROM positions WHERE user_id = ? ORDER BY symbol",
-      [userId]
+      "SELECT symbol, qty, avg_price, last_price, opened_at FROM positions WHERE user_id = ? AND mode = ? ORDER BY symbol",
+      [userId, normMode(mode)]
     );
     return r.rows;
   }
-  async upsertPosition(p: { user_id: number; symbol: string; qty: number; avg_price: number; last_price: number }) {
+  async upsertPosition(p: {
+    user_id: number;
+    symbol: string;
+    qty: number;
+    avg_price: number;
+    last_price: number;
+    mode?: string;
+  }) {
     await d1Query(
-      `INSERT INTO positions (user_id, symbol, qty, avg_price, last_price, opened_at) VALUES (?, ?, ?, ?, ?, ?)
-       ON CONFLICT(user_id, symbol) DO UPDATE SET qty = excluded.qty, avg_price = excluded.avg_price, last_price = excluded.last_price`,
-      [p.user_id, p.symbol, p.qty, p.avg_price, p.last_price, nowSql()]
+      `INSERT INTO positions (user_id, symbol, qty, avg_price, last_price, opened_at, mode) VALUES (?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, symbol, mode) DO UPDATE SET qty = excluded.qty, avg_price = excluded.avg_price, last_price = excluded.last_price`,
+      [p.user_id, p.symbol, p.qty, p.avg_price, p.last_price, nowSql(), normMode(p.mode)]
     );
   }
-  async updatePositionPrice(userId: number, symbol: string, lastPrice: number) {
-    await d1Query("UPDATE positions SET last_price = ? WHERE user_id = ? AND symbol = ?", [lastPrice, userId, symbol]);
+  async updatePositionPrice(userId: number, symbol: string, lastPrice: number, mode = "paper") {
+    await d1Query("UPDATE positions SET last_price = ? WHERE user_id = ? AND symbol = ? AND mode = ?", [
+      lastPrice,
+      userId,
+      symbol,
+      normMode(mode),
+    ]);
   }
-  async deletePosition(userId: number, symbol: string) {
-    await d1Query("DELETE FROM positions WHERE user_id = ? AND symbol = ?", [userId, symbol]);
+  async deletePosition(userId: number, symbol: string, mode = "paper") {
+    await d1Query("DELETE FROM positions WHERE user_id = ? AND symbol = ? AND mode = ?", [
+      userId,
+      symbol,
+      normMode(mode),
+    ]);
   }
   async recordTrade(t: NewTrade) {
     await d1Query(
-      "INSERT INTO trades (user_id, symbol, side, qty, price, amount, pnl, reason, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'filled')",
-      [t.user_id, t.symbol, t.side, t.qty, t.price, t.amount, t.pnl, t.reason]
+      "INSERT INTO trades (user_id, symbol, side, qty, price, amount, pnl, reason, status, mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'filled', ?)",
+      [t.user_id, t.symbol, t.side, t.qty, t.price, t.amount, t.pnl, t.reason, normMode(t.mode)]
     );
   }
-  async listTrades(userId: number, limit: number): Promise<Trade[]> {
-    const r = await d1Query<Trade>(
-      "SELECT * FROM trades WHERE user_id = ? ORDER BY id DESC LIMIT ?",
-      [userId, limit]
-    );
+  async listTrades(userId: number, limit: number, mode?: string): Promise<Trade[]> {
+    const sql = mode
+      ? "SELECT * FROM trades WHERE user_id = ? AND mode = ? ORDER BY id DESC LIMIT ?"
+      : "SELECT * FROM trades WHERE user_id = ? ORDER BY id DESC LIMIT ?";
+    const r = await d1Query<Trade>(sql, mode ? [userId, normMode(mode), limit] : [userId, limit]);
     return r.rows;
   }
   async listRecentTradesAll(limit: number): Promise<(Trade & { email?: string })[]> {
@@ -375,17 +566,24 @@ class D1Store {
       [userId, row.ai_provider, row.ai_key_enc, row.broker_name, row.broker_key_enc, row.broker_secret_enc, nowSql()]
     );
   }
-  async insertWithdrawal(userId: number, amount: number, method: string, destination: string) {
+  async insertWithdrawal(
+    userId: number,
+    amount: number,
+    method: string,
+    destination: string,
+    mode = "paper",
+    status = "approved"
+  ) {
     await d1Query(
-      "INSERT INTO withdrawals (user_id, amount, method, destination, status) VALUES (?, ?, ?, ?, 'approved')",
-      [userId, amount, method, destination]
+      "INSERT INTO withdrawals (user_id, amount, method, destination, status, mode) VALUES (?, ?, ?, ?, ?, ?)",
+      [userId, amount, method, destination, status, normMode(mode)]
     );
   }
-  async listWithdrawals(userId: number): Promise<Withdrawal[]> {
-    const r = await d1Query<Withdrawal>(
-      "SELECT * FROM withdrawals WHERE user_id = ? ORDER BY id DESC LIMIT 100",
-      [userId]
-    );
+  async listWithdrawals(userId: number, mode?: string): Promise<Withdrawal[]> {
+    const sql = mode
+      ? "SELECT * FROM withdrawals WHERE user_id = ? AND mode = ? ORDER BY id DESC LIMIT 100"
+      : "SELECT * FROM withdrawals WHERE user_id = ? ORDER BY id DESC LIMIT 100";
+    const r = await d1Query<Withdrawal>(sql, mode ? [userId, normMode(mode)] : [userId]);
     return r.rows;
   }
   async listWithdrawalsAll(limit: number): Promise<(Withdrawal & { email?: string })[]> {
@@ -395,13 +593,57 @@ class D1Store {
     );
     return r.rows;
   }
-  async insertEquity(userId: number, equity: number) {
-    await d1Query("INSERT INTO equity_snapshots (user_id, equity) VALUES (?, ?)", [userId, equity]);
+  async getWithdrawal(id: number) {
+    const r = await d1Query<Withdrawal>("SELECT * FROM withdrawals WHERE id = ? LIMIT 1", [id]);
+    return r.rows[0] || null;
   }
-  async listEquity(userId: number, limit: number) {
+  async setWithdrawalStatus(id: number, status: string) {
+    await d1Query("UPDATE withdrawals SET status = ? WHERE id = ?", [status, id]);
+  }
+  async insertDeposit(
+    userId: number,
+    amount: number,
+    method: string,
+    destination: string,
+    mode = "paper",
+    status = "approved"
+  ) {
+    const ins = await d1Query(
+      "INSERT INTO deposits (user_id, amount, method, destination, status, mode) VALUES (?, ?, ?, ?, ?, ?)",
+      [userId, amount, method, destination, status, normMode(mode)]
+    );
+    const id = Number(ins.meta.last_row_id);
+    const r = await d1Query<Deposit>("SELECT * FROM deposits WHERE id = ? LIMIT 1", [id]);
+    return r.rows[0];
+  }
+  async listDeposits(userId: number, mode?: string): Promise<Deposit[]> {
+    const sql = mode
+      ? "SELECT * FROM deposits WHERE user_id = ? AND mode = ? ORDER BY id DESC LIMIT 50"
+      : "SELECT * FROM deposits WHERE user_id = ? ORDER BY id DESC LIMIT 50";
+    const r = await d1Query<Deposit>(sql, mode ? [userId, normMode(mode)] : [userId]);
+    return r.rows;
+  }
+  async listDepositsAll(limit: number): Promise<(Deposit & { email?: string })[]> {
+    const r = await d1Query<Deposit & { email?: string }>(
+      "SELECT d.*, u.email FROM deposits d JOIN users u ON u.id = d.user_id ORDER BY d.id DESC LIMIT ?",
+      [limit]
+    );
+    return r.rows;
+  }
+  async getDeposit(id: number) {
+    const r = await d1Query<Deposit>("SELECT * FROM deposits WHERE id = ? LIMIT 1", [id]);
+    return r.rows[0] || null;
+  }
+  async setDepositStatus(id: number, status: string) {
+    await d1Query("UPDATE deposits SET status = ? WHERE id = ?", [status, id]);
+  }
+  async insertEquity(userId: number, equity: number, mode = "paper") {
+    await d1Query("INSERT INTO equity_snapshots (user_id, equity, mode) VALUES (?, ?, ?)", [userId, equity, normMode(mode)]);
+  }
+  async listEquity(userId: number, limit: number, mode = "paper") {
     const r = await d1Query<{ created_at: string; equity: number }>(
-      "SELECT created_at, equity FROM equity_snapshots WHERE user_id = ? ORDER BY id DESC LIMIT ?",
-      [userId, limit]
+      "SELECT created_at, equity FROM equity_snapshots WHERE user_id = ? AND mode = ? ORDER BY id DESC LIMIT ?",
+      [userId, normMode(mode), limit]
     );
     return r.rows.reverse();
   }
@@ -414,12 +656,12 @@ class D1Store {
       "SELECT user_id, COUNT(*) AS n, MAX(created_at) AS lastAt FROM trades GROUP BY user_id"
     );
     const p = await d1Query<{ user_id: number; n: number }>(
-      "SELECT user_id, COUNT(*) AS n FROM positions GROUP BY user_id"
+      "SELECT user_id, COUNT(*) AS n FROM positions GROUP BY user_id, mode"
     );
     const trades: Record<string, { n: number; lastAt: string }> = {};
     for (const row of t.rows) trades[String(row.user_id)] = { n: Number(row.n), lastAt: String(row.lastAt) };
     const positions: Record<string, number> = {};
-    for (const row of p.rows) positions[String(row.user_id)] = Number(row.n);
+    for (const row of p.rows) positions[String(row.user_id)] = (positions[String(row.user_id)] || 0) + Number(row.n);
     return { trades, positions };
   }
   async listUsersWithAccounts(limit = 200): Promise<AdminUserRow[]> {

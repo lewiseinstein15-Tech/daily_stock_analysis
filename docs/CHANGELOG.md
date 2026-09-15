@@ -11,6 +11,15 @@
   - Multi-user by design: every trader creates their own in-app account and enters their two keys inside the app (AI model key — Gemini or any other; broker API key — Alpaca, Binance, Pocket Option, MT5 and more). Keys live on the device, never in GitHub or git secrets.
   - Live dashboard: full balance, every trade, every dollar of profit, plain-English Jexi feed, pause / resume / kill-switch, 4-step in-app withdrawal flow — all real-time.
   - Ships as `Jexi-v1.0.0.apk` (GitHub Release asset): native Android shell (minSdk 24 / target 34), offline demo mode, signed, launcher icon included; full Expo/React Native source in `mobile-app/`.
+## [0.7.0] — Everything lives in the Jexi app (keys, notifications, live + deposits)
+- [Added] **Agent API on Jexi server** (`/api/agent/keys`, `/api/agent/notify`, `/api/agent/state`, auth via `x-agent-secret` / `AGENT_SECRET`): the trading runner now pulls the user's saved broker + AI keys from their Jexi account at start and pushes every report into the app's Notifications feed. No broker or AI keys in GitHub secrets; no ntfy.
+- [Added] **Paper / Live trading books**: per-mode ledgers (accounts, positions, trades, equity, withdrawals, deposits all carry `mode`); switching modes in the app parks the current book and restores the other exactly as left. Live mode is gated on saved Alpaca keys (verified against the broker) and sends REAL market orders through the user's keys (`server/lib/broker.ts`); every action lands in the feed.
+- [Added] **Deposits** (`/api/account/deposit`): paper deposits credit instantly (M-Pesa / bank / card / crypto); live deposits become `pending` and are confirmed in the new admin Deposits tab (`/api/admin/deposits`, `/api/admin/withdrawals` approve/reject). Withdrawals in live mode are pending until paid out.
+- [Added] **Notifications center in the web app**: bell with unread badge, `#/notifications` view, feed limit raised to 100, `useNotifications` hook (last-seen marker in localStorage) — replaces ntfy entirely.
+- [Added] `jexi_market/app_account.py` bridge + `AppReporter`/`make_reporter` factory; `MarketConfig` gains `JEXI_APP_SERVER` / `JEXI_AGENT_SECRET` / `JEXI_APP_EMAIL`; `get_config()` auto-loads account keys. GitHub workflows (`auto-trading.yml`, `jexi-watch.yml`) now carry only `JEXI_AGENT_SECRET` + `JEXI_APP_EMAIL`.
+- [Changed] Keys panel broker options: `alpaca-paper` / `alpaca-live` / `binance` / `paper` (alpaca-live points the engine + runner at the live endpoint).
+- [Tested] 232 jexi_market tests pass (10 new for the app bridge).
+
 # Changelog
 
 All notable changes to this project will be documented in this file.

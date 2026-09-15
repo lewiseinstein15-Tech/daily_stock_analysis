@@ -43,7 +43,7 @@ from jexi_market.config import MarketConfig
 from jexi_market.data import MarketDataClient
 from jexi_market.execution.lifecycle import OrderLifecycleManager
 from jexi_market.memory import PerformanceMemory
-from jexi_market.notifications.reporter import NtfyReporter
+from jexi_market.notifications import make_reporter
 from jexi_market.observability import AuditLog
 from jexi_market.pipeline import DecisionPipeline
 from jexi_market.planner import AccountPlanner, TradingPlan
@@ -101,7 +101,7 @@ class OpportunityRunner:
         state_store: Optional[RiskStateStore] = None,
         audit: Optional[AuditLog] = None,
         trigger_engine: Optional[TriggerEngine] = None,
-        reporter: Optional[NtfyReporter] = None,
+        reporter: Optional[Any] = None,
         enable_telegram: Optional[bool] = None,
     ):
         self.config = config or MarketConfig()
@@ -117,7 +117,7 @@ class OpportunityRunner:
             self.config,
             trigger_config=TriggerConfig(cooldown_seconds=max(600, self.config.watch_interval_seconds * 30)),
         )
-        self.reporter = reporter or NtfyReporter(self.config)
+        self.reporter = reporter or make_reporter(self.config)
         self.planner = AccountPlanner(
             self.config, broker=self.broker, memory=self.memory, state_store=self.state
         )

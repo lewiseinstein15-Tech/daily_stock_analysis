@@ -12,6 +12,7 @@ module; only a redacted view is exposed through :meth:`MarketConfig.summary`.
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
@@ -74,11 +75,24 @@ class MarketConfig:
     )
 
     # --- ntfy notifications ------------------------------------------------
+    # (Legacy fallback. When the Jexi app is configured below, notifications
+    #  go straight into the app's feed and ntfy is never used.)
     ntfy_url: str = field(default_factory=lambda: os.getenv("NTFY_URL", ""))
     ntfy_token: str = field(default_factory=lambda: os.getenv("NTFY_TOKEN", ""))
     jexi_ntfy_topic: str = field(
         default_factory=lambda: os.getenv("JEXI_MARKET_NTFY_TOPIC", "jexi_market_reports")
     )
+
+    # --- v0.5: Jexi app account (keys + notifications + mode) ---------------
+    # When all three are set, the runner pulls the user's saved broker/AI
+    # keys from their Jexi account at start, follows the paper/live switch
+    # made in the app, and pushes every report into the app's notification
+    # feed. Nothing sensitive needs to live in GitHub secrets.
+    jexi_app_server: str = field(default_factory=lambda: os.getenv("JEXI_APP_SERVER", ""))
+    jexi_app_agent_secret: str = field(default_factory=lambda: os.getenv("JEXI_AGENT_SECRET", ""))
+    jexi_app_email: str = field(default_factory=lambda: os.getenv("JEXI_APP_EMAIL", ""))
+    # Set at runtime by apply_account_keys(): the mode the user chose in the app.
+    app_account_mode: str = "paper"
     # Default priority levels — see notifications/reporter.py for the map.
     ntfy_default_priority: str = field(default_factory=lambda: os.getenv("NTFY_DEFAULT_PRIORITY", "default"))
 
@@ -206,6 +220,9 @@ class MarketConfig:
             "alpaca_api_secret_set": bool(self.alpaca_api_secret),
             "ntfy_url_set": bool(self.ntfy_url),
             "ntfy_topic": self.jexi_ntfy_topic,
+            "jexi_app_server_set": bool(self.jexi_app_server),
+            "jexi_app_email_set": bool(self.jexi_app_email),
+            "app_account_mode": self.app_account_mode,
             "live_trading_enabled": self.live_trading_enabled,
             "paper_validation_days": self.paper_validation_days,
             "research_backend": self.research_backend,
@@ -235,10 +252,22 @@ _singleton: Optional[MarketConfig] = None
 
 
 def get_config() -> MarketConfig:
-    """Module-level cached config (matches the repo's accessor convention)."""
+    """Module-level cached config (matches the repo's accessor convention).
+
+    On first build the config also pulls the user's saved keys from their
+    Jexi app account (when JEXI_APP_* is wired) so every entry point —
+    watch, orchestrator, runner, CLI — trades with the account's own keys
+    instead of GitHub secrets.
+    """
     global _singleton
     if _singleton is None:
         _singleton = MarketConfig()
+        try:
+            from jexi_market.app_account import apply_account_keys
+
+            apply_account_keys(_singleton)
+        except Exception as exc:  # never break a run over the key bridge
+            logging.getLogger(__name__).warning("jexi app key bridge skipped: %s", type(exc).__name__)
     return _singleton
 
 

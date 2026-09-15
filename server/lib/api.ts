@@ -35,3 +35,13 @@ export function checkCronSecret(req: Request): boolean {
   if (req.headers.get("authorization") === `Bearer ${secret}`) return true;
   return false;
 }
+
+// Server-to-server auth for the JEXI runner (the trading bot pulling keys
+// from the user's account and pushing notifications into the app feed).
+export function checkAgentSecret(req: Request): boolean {
+  const secret = process.env.AGENT_SECRET || "";
+  if (!secret) return false;
+  if (req.headers.get("x-agent-secret") === secret) return true;
+  if (req.headers.get("authorization") === `Bearer ${secret}`) return true;
+  return false;
+}

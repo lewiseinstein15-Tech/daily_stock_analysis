@@ -9,9 +9,10 @@ import { AuthView, Landing } from "@/components/jexi/views-public";
 import { AssetView, CommandView, MarketsView } from "@/components/jexi/views-app";
 import { AlertsView, IntelligenceView, PortfolioView, SettingsView } from "@/components/jexi/views-app2";
 import { PrivacyView, TermsView } from "@/components/jexi/views-legal";
-import { UNIVERSE, useAccount, useAuth, useFeed, useProfits } from "@/lib/jexi/data";
+import { UNIVERSE, useAccount, useAuth, useFeed, useNotifications, useProfits } from "@/lib/jexi/data";
+import { NotificationsView } from "@/components/jexi/views-app2";
 
-type View = "landing" | "auth" | "command" | "markets" | "asset" | "portfolio" | "intelligence" | "alerts" | "settings" | "legal";
+type View = "landing" | "auth" | "command" | "markets" | "asset" | "portfolio" | "intelligence" | "alerts" | "notifications" | "settings" | "legal";
 
 const NAV: { id: View; label: string; icon: React.ReactNode }[] = [
   { id: "command", label: "Command", icon: <LayoutDashboard size={17} /> },
@@ -40,6 +41,8 @@ function parseHash(): { view: View; symbol?: string; doc?: string } {
       return { view: "intelligence" };
     case "alerts":
       return { view: "alerts" };
+    case "notifications":
+      return { view: "notifications" };
     case "settings":
       return { view: "settings" };
     case "legal":
@@ -54,6 +57,7 @@ export function JexiApp() {
   const { user, token, ready, isAdmin, signOut } = useAuth();
   const { account } = useAccount(token);
   const liveFeed = useFeed(token);
+  const { unread } = useNotifications(token);
   const profits = useProfits(token);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
@@ -99,6 +103,8 @@ export function JexiApp() {
 
     const shared = { go: nav, token, account, feed, isDemo: !connected };
     switch (view) {
+      case "notifications":
+        return <NotificationsView token={token} isDemo={!connected} />;
       case "command":
         return <CommandView {...shared} />;
       case "markets":
@@ -159,6 +165,25 @@ export function JexiApp() {
               <span className="hidden sm:inline">Search</span>
               <span className="data hidden text-[11px] sm:inline">⌘K</span>
             </button>
+            {connected && (
+              <button
+                className="relative flex h-9 w-9 items-center justify-center rounded-lg"
+                style={{ background: "var(--panel-2)", border: "1px solid var(--line)", color: "var(--ink-2)" }}
+                onClick={() => go("notifications")}
+                aria-label={`Notifications${unread ? ` (${unread} new)` : ""}`}
+                title="Notifications — everything Jexi does lands here"
+              >
+                <Bell size={15} />
+                {unread > 0 && (
+                  <span
+                    className="absolute -right-1 -top-1 flex h-[17px] min-w-[17px] items-center justify-center rounded-full px-1 text-[10px] font-bold"
+                    style={{ background: "var(--ember)", color: "#180f08" }}
+                  >
+                    {unread > 9 ? "9+" : unread}
+                  </span>
+                )}
+              </button>
+            )}
             {connected ? (
               <button className="flex items-center gap-2" onClick={() => go("settings")} aria-label="Settings">
                 <span

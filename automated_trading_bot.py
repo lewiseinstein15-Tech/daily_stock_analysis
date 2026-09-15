@@ -383,10 +383,48 @@ class NtfyNotifier:
             return False
 
     # -- public API ----------------------------------------------------------
+    def _send_to_jexi_app(self, title: str, message: str, priority: int) -> bool:
+        """Deliver the report into the user's Jexi app notification feed.
+
+        The app is the primary destination — when JEXI_APP_SERVER,
+        JEXI_AGENT_SECRET and JEXI_APP_EMAIL are configured, every report
+        lands inside the Jexi app and ntfy is never touched.
+        """
+        server = (os.environ.get("JEXI_APP_SERVER") or "").strip().rstrip("/")
+        secret = (os.environ.get("JEXI_AGENT_SECRET") or "").strip()
+        email = (os.environ.get("JEXI_APP_EMAIL") or "").strip()
+        if not (server and secret and email):
+            return False
+        payload = {
+            "email": email,
+            "kind": "warn" if priority >= 4 else "info",
+            "title": title,
+            "message": message,
+        }
+        try:
+            resp = requests.post(
+                f"{server}/api/agent/notify",
+                json=payload,
+                headers={"x-agent-secret": secret, "Content-Type": "application/json"},
+                timeout=self.config.ntfy_timeout,
+            )
+            if 200 <= resp.status_code < 300:
+                print(f"[jexi-app] sent: {title}")
+                return True
+            print(f"[jexi-app] publish failed (HTTP {resp.status_code})")
+            return False
+        except requests.RequestException as exc:
+            print(f"[jexi-app] request failed: {type(exc).__name__}: {exc}")
+            return False
+
     def send(self, title: str, message: str, priority: int = 3, tags: Optional[List[str]] = None) -> bool:
         """Publish one notification. Never raises. Returns success."""
         title = (title or "").strip()[:250] or "Trading Bot"
         message = message or ""
+
+        # The Jexi app is the notification home — ntfy is only a fallback.
+        if self._send_to_jexi_app(title, message, priority):
+            return True
 
         if len(message.encode("utf-8")) > self.config.ntfy_message_byte_limit:
             print("[ntfy] message too large — using attachment fallback")
@@ -1434,8 +1472,67 @@ def run_cycle(
     return 0
 
 
+def load_keys_from_jexi_app() -> str:
+    """Pull the user's saved broker + AI keys from their Jexi account.
+
+    Called once at start-up: the keys live in the Jexi app (encrypted on
+    the Jexi server), so GitHub needs no trading secrets.  Returns the
+    account mode ("paper" or "live").
+    """
+    server = (os.environ.get("JEXI_APP_SERVER") or "").strip().rstrip("/")
+    secret = (os.environ.get("JEXI_AGENT_SECRET") or "").strip()
+    email = (os.environ.get("JEXI_APP_EMAIL") or "").strip()
+    if not (server and secret and email):
+        return "paper"
+    try:
+        resp = requests.get(
+            f"{server}/api/agent/keys",
+            params={"email": email},
+            headers={"x-agent-secret": secret},
+            timeout=15,
+        )
+        if resp.status_code != 200:
+            print(f"[jexi-app] key fetch failed (HTTP {resp.status_code}) — using env credentials")
+            return "paper"
+        data = resp.json()
+    except requests.RequestException as exc:
+        print(f"[jexi-app] key fetch error: {type(exc).__name__} — using env credentials")
+        return "paper"
+
+    if data.get("set"):
+        broker = (data.get("brokerName") or "").strip().lower()
+        key = (data.get("brokerKey") or "").strip()
+        broker_secret = (data.get("brokerSecret") or "").strip()
+        if broker.startswith("alpaca") and key:
+            os.environ["ALPACA_API_KEY"] = key
+            if broker_secret:
+                os.environ["ALPACA_SECRET_KEY"] = broker_secret
+                os.environ["ALPACA_API_SECRET"] = broker_secret
+            live = broker == "alpaca-live"
+            os.environ["ALPACA_ENV"] = "live" if live else "paper"
+            os.environ["APCA_API_BASE_URL"] = (
+                "https://api.alpaca.markets" if live else "https://paper-api.alpaca.markets"
+            )
+            print(f"[jexi-app] broker keys loaded from the account ({broker})")
+        ai_provider = (data.get("aiProvider") or "").strip().lower()
+        ai_key = (data.get("aiKey") or "").strip()
+        env_map = {
+            "openai": "OPENAI_API_KEY",
+            "anthropic": "ANTHROPIC_API_KEY",
+            "gemini": "GEMINI_API_KEY",
+            "deepseek": "DEEPSEEK_API_KEY",
+        }
+        if ai_provider in env_map and ai_key:
+            os.environ[env_map[ai_provider]] = ai_key
+            print(f"[jexi-app] AI key loaded from the account ({ai_provider})")
+    mode = (data.get("mode") or "paper").strip().lower()
+    return "live" if mode == "live" else "paper"
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(argv if argv is not None else sys.argv[1:])
+    # Keys belong to the user's Jexi account — pull them before anything else.
+    load_keys_from_jexi_app()
     config = BotConfig.from_env()
     if "--force" in argv:
         config.force_run = True

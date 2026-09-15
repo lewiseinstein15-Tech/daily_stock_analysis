@@ -18,6 +18,7 @@ export async function GET(req: Request) {
     if (!user) return bad("Session no longer valid — please sign in again.", 401);
     return bad("No account found.", 404);
   }
+  const mode = account.mode === "live" ? "live" : "paper";
 
   // Keep Jexi working even without cron: if the last evaluation is stale,
   // run one now (bounded by prices cache + 3 minute gate).
@@ -32,7 +33,7 @@ export async function GET(req: Request) {
   }
 
   const fresh = (await store.getAccount(auth.uid)) || account;
-  const positions = await store.getPositions(auth.uid);
+  const positions = await store.getPositions(auth.uid, mode);
 
   // refresh prices for held symbols so the app shows live value
   const symbols = positions.map((p) => p.symbol);
@@ -45,14 +46,16 @@ export async function GET(req: Request) {
   }
   const equity = fresh.cash + positionsValue;
   const pnl = equity - fresh.starting_balance;
+  const pendingDeposits = (await store.listDeposits(auth.uid, mode)).filter((d) => d.status === "pending");
 
   return ok({
     cash: Math.round(fresh.cash * 100) / 100,
     equity: Math.round(equity * 100) / 100,
     startingBalance: fresh.starting_balance,
     pnl: Math.round(pnl * 100) / 100,
-    pnlPct: Math.round((pnl / fresh.starting_balance) * 10000) / 100,
-    mode: fresh.mode,
+    pnlPct: fresh.starting_balance > 0 ? Math.round((pnl / fresh.starting_balance) * 10000) / 100 : 0,
+    mode,
+    pendingDeposits: pendingDeposits.reduce((a, d) => a + d.amount, 0),
     positions: positions.map((p) => ({
       symbol: p.symbol,
       qty: p.qty,

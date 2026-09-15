@@ -84,6 +84,7 @@ export interface AccountInfo {
   pnl: number;
   pnlPct: number;
   mode: string;
+  pendingDeposits?: number;
   positions: Position[];
 }
 export interface Trade {
@@ -133,6 +134,7 @@ export interface AdminOverview {
   }[];
   recentTrades: { id: number; email: string; symbol: string; side: string; qty: number; price: number; pnl: number; createdAt: string }[];
   withdrawals: { id: number; email: string; amount: number; method: string; status: string; createdAt: string }[];
+  deposits: { id: number; email: string; amount: number; method: string; status: string; createdAt: string }[];
 }
 
 // ---------------- app version + updates ----------------
@@ -549,19 +551,25 @@ export function useAccount(token: string | null, pollMs = 12000) {
     }
     load();
     const id = setInterval(load, pollMs);
-    return () => clearInterval(id);
+    // deposits / mode switches dispatch this to refresh immediately
+    const onChanged = () => load();
+    window.addEventListener("jexi.account-changed", onChanged);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener("jexi.account-changed", onChanged);
+    };
   }, [token, pollMs, load]);
 
   return { account, error, loading, reload: load };
 }
 
-export function useFeed(token: string | null, pollMs = 15000) {
+export function useFeed(token: string | null, pollMs = 15000, limit = 30) {
   const [events, setEvents] = useState<FeedEvent[]>([]);
   useEffect(() => {
     if (!token) return;
     let alive = true;
     const load = () =>
-      api<{ events: FeedEvent[] }>("/api/feed", { token })
+      api<{ events: FeedEvent[] }>(`/api/feed?limit=${limit}`, { token })
         .then((r) => alive && setEvents(r.events))
         .catch(() => {});
     load();
@@ -570,8 +578,37 @@ export function useFeed(token: string | null, pollMs = 15000) {
       alive = false;
       clearInterval(id);
     };
-  }, [token, pollMs]);
+  }, [token, pollMs, limit]);
   return events;
+}
+
+// ---------------- notifications (in-app, replaces ntfy) ----------------
+// Every Jexi event — engine trades, deposits, withdrawals, the daily runner
+// report — lands in the feed. The bell shows how many you have not seen.
+
+const FEED_SEEN_KEY = "jexi.feedSeenId";
+
+export function useNotifications(token: string | null, pollMs = 12000) {
+  const events = useFeed(token, pollMs, 60);
+  const [seenId, setSeenId] = useState(0);
+
+  useEffect(() => {
+    // One-time hydration of the last-seen marker (external system -> state).
+    const raw = Number(localStorage.getItem(FEED_SEEN_KEY) || 0);
+    if (Number.isFinite(raw)) setSeenId(raw);
+  }, []);
+
+  const unread = events.filter((e) => e.id > seenId).length;
+
+  const markAllRead = useCallback(() => {
+    const top = events.reduce((m, e) => Math.max(m, e.id), 0);
+    if (top > 0) {
+      localStorage.setItem(FEED_SEEN_KEY, String(top));
+      setSeenId(top);
+    }
+  }, [events]);
+
+  return { events, unread, markAllRead };
 }
 
 export function useProfits(token: string | null, pollMs = 30000) {
@@ -625,6 +662,47 @@ export async function saveKeys(
 
 export async function requestWithdrawal(token: string, amount: number, method: string, destination: string) {
   return api("/api/withdrawals", { method: "POST", body: { amount, method, destination }, token });
+}
+
+// ---------------- trading mode + deposits ----------------
+
+export async function setTradingMode(token: string, mode: "paper" | "live") {
+  return api<{ mode: string; changed: boolean; cash?: number }>("/api/account/mode", {
+    method: "POST",
+    body: { mode },
+    token,
+  });
+}
+
+export async function requestDeposit(token: string, amount: number, method: string, destination: string) {
+  return api<{ status: string; amount: number; newCash?: number }>("/api/account/deposit", {
+    method: "POST",
+    body: { amount, method, destination },
+    token,
+  });
+}
+
+export interface DepositRow {
+  id: number;
+  amount: number;
+  method: string;
+  destination: string;
+  status: string;
+  created_at: string;
+}
+
+export async function fetchDeposits(token: string) {
+  return api<{ deposits: DepositRow[] }>("/api/account/deposit", { token });
+}
+
+// Admin: approve / reject pending live deposits and withdrawals.
+export async function adminDecide(
+  token: string,
+  kind: "deposits" | "withdrawals",
+  id: number,
+  action: "approve" | "reject"
+) {
+  return api(`/api/admin/${kind}`, { method: "POST", body: { id, action }, token });
 }
 
 export async function fetchKeys(token: string) {

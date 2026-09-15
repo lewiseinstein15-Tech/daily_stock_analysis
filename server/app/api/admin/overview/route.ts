@@ -10,10 +10,11 @@ export async function GET(req: Request) {
   const me = await store.getUserById(auth.uid);
   if (!me || !me.is_admin) return bad("Admin access required.", 403);
 
-  const [users, recentTrades, withdrawals, activity] = await Promise.all([
+  const [users, recentTrades, withdrawals, deposits, activity] = await Promise.all([
     store.listUsersWithAccounts(200),
     store.listRecentTradesAll(20),
     store.listWithdrawalsAll(20),
+    store.listDepositsAll(20),
     store.adminActivity(),
   ]);
 
@@ -69,6 +70,14 @@ export async function GET(req: Request) {
       method: w.method,
       status: w.status,
       createdAt: w.created_at,
+    })),
+    deposits: deposits.map((d) => ({
+      id: d.id,
+      email: (d as { email?: string }).email || "",
+      amount: d.amount,
+      method: d.method,
+      status: d.status,
+      createdAt: d.created_at,
     })),
   });
 }

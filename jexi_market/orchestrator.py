@@ -52,7 +52,7 @@ from jexi_market.contracts import (
 from jexi_market.data import MarketDataClient, MarketSnapshot
 from jexi_market.indicators import FactorSnapshot, compute_factors
 from jexi_market.memory import PerformanceMemory
-from jexi_market.notifications import NtfyReporter
+from jexi_market.notifications import make_reporter
 from jexi_market.risk import PortfolioState, RiskGate
 from jexi_market.risk.state import RiskStateStore
 from jexi_market.execution import AlpacaClient
@@ -98,7 +98,7 @@ class MarketBoss:
         *,
         data_client: Optional[MarketDataClient] = None,
         memory: Optional[PerformanceMemory] = None,
-        reporter: Optional[NtfyReporter] = None,
+        reporter: Optional[Any] = None,
         risk_gate: Optional[RiskGate] = None,
         alpaca: Optional[AlpacaClient] = None,
         agents: Optional[Dict[str, BaseAgent]] = None,
@@ -112,7 +112,7 @@ class MarketBoss:
         self.config = config or MarketConfig()
         self.data_client = data_client or MarketDataClient()
         self.memory = memory or PerformanceMemory(self.config.memory_db_path)
-        self.reporter = reporter or NtfyReporter(self.config)
+        self.reporter = reporter or make_reporter(self.config)
         self.state_store = state_store or RiskStateStore(self.config.state_db_path)
         self.risk_gate = risk_gate or RiskGate(
             RiskEnvelope(**self.config.risk_envelope_kwargs),
